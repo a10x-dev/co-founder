@@ -1,16 +1,7 @@
 import { useState } from "react";
-import {
-  Package,
-  Globe,
-  Smartphone,
-  ShoppingCart,
-  Zap,
-  Layers,
-  Palette,
-  ShieldCheck,
-  Rocket,
-} from "lucide-react";
+import { Package, Globe, Smartphone, ShoppingCart } from "lucide-react";
 import type { CreateAgentRequest } from "@/types";
+import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { createAgent } from "@/lib/api";
 
 const STEPS = ["Idea", "Personality", "Schedule"] as const;
@@ -47,54 +38,6 @@ const TEMPLATES = [
     subtitle: "Online store",
     mission:
       "Build an online store with product catalog, shopping cart, and checkout flow.",
-  },
-] as const;
-
-const PERSONALITIES = [
-  {
-    id: "move_fast",
-    name: "Move Fast",
-    icon: Zap,
-    description: "Ships quickly, makes decisions on the fly. Gets things done fast.",
-    bestFor: "Best for: MVPs and rapid prototyping",
-  },
-  {
-    id: "build_carefully",
-    name: "Build Carefully",
-    icon: Layers,
-    description: "Plans before building, writes thorough code. Takes longer but more solid.",
-    bestFor: "Best for: production-quality projects",
-  },
-  {
-    id: "explore_creatively",
-    name: "Explore Creatively",
-    icon: Palette,
-    description: "Tries unconventional approaches, experiments freely.",
-    bestFor: "Best for: novel ideas and creative work",
-  },
-] as const;
-
-const CHECKIN_OPTIONS = [
-  { label: "Every 30 min", sublabel: "Active building", value: 1800 },
-  { label: "Every hour", sublabel: "Steady progress", value: 3600 },
-  { label: "Every 4 hours", sublabel: "Light touch", value: 14400 },
-  { label: "Once a day", sublabel: "Set and forget", value: 86400 },
-] as const;
-
-const AUTONOMY_OPTIONS = [
-  {
-    id: "semi",
-    label: "Asks before big decisions",
-    description:
-      "Your agent will pause and notify you before deploying or making major changes.",
-    icon: ShieldCheck,
-  },
-  {
-    id: "yolo",
-    label: "Works independently",
-    description:
-      "Your agent makes all decisions on its own. Review everything in the activity log.",
-    icon: Rocket,
   },
 ] as const;
 
@@ -137,29 +80,39 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
 
   const canProceedStep1 = mission.trim().length > 0;
 
+  const handleBack = () => setStep((s) => Math.max(1, s - 1));
+  const handleNext = () => {
+    if (step === 3) {
+      handleSubmit();
+    } else {
+      setStep((s) => s + 1);
+    }
+  };
+
+  const canProceed =
+    step === 1 ? canProceedStep1 : step === 2 ? true : !isSubmitting;
+
   return (
-    <div
-      className="min-h-full flex flex-col items-center relative"
-      style={{ paddingTop: 48 }}
-    >
-      <button
-        onClick={onCancel}
-        className="absolute top-6 right-6 rounded-lg px-3 py-1.5 text-[14px] font-medium transition-all duration-150 ease-out cursor-pointer"
-        style={{ color: "var(--text-secondary)" }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "var(--bg-hover)";
-          e.currentTarget.style.color = "var(--text-primary)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "transparent";
-          e.currentTarget.style.color = "var(--text-secondary)";
-        }}
-      >
-        Cancel
-      </button>
-      <div className="w-full max-w-[520px] px-6 flex flex-col" style={{ gap: 32 }}>
-        {/* Step indicator */}
-        <div className="flex flex-col items-center" style={{ gap: 8 }}>
+    <div className="h-full flex flex-col">
+      {/* Top bar: step indicator + cancel */}
+      <div className="shrink-0 relative pt-6 pb-4 flex justify-center">
+        <button
+          onClick={onCancel}
+          className="absolute top-6 right-6 rounded-lg px-3 py-1.5 text-[14px] font-medium transition-all duration-150 ease-out cursor-pointer"
+          style={{ color: "var(--text-secondary)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "var(--bg-hover)";
+            e.currentTarget.style.color = "var(--text-primary)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+            e.currentTarget.style.color = "var(--text-secondary)";
+          }}
+        >
+          Cancel
+        </button>
+
+        <div className="flex flex-col items-center gap-2">
           <div className="flex items-center">
             {STEPS.map((_, i) => (
               <div key={i} className="flex items-center">
@@ -199,407 +152,183 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
             {STEPS[step - 1]}
           </span>
         </div>
+      </div>
 
-        {/* Step 1 */}
-        {step === 1 && (
-          <div
-            className="flex flex-col"
-            style={{ gap: 24, transition: "opacity 150ms ease-out" }}
-          >
-            <div>
-              <h1
-                className="font-semibold"
-                style={{ fontSize: 28, color: "var(--text-primary)" }}
-              >
-                What do you want to build?
-              </h1>
-              <p
-                className="mt-2"
-                style={{
-                  fontSize: 15,
-                  color: "var(--text-secondary)",
-                  marginTop: 8,
-                }}
-              >
-                Describe your idea in a few sentences. Your agent will figure out
-                the rest.
-              </p>
-            </div>
-
-            <textarea
-              value={mission}
-              onChange={(e) => setMission(e.target.value)}
-              placeholder="I want to build a SaaS that helps small businesses track their inventory..."
-              rows={4}
-              className="w-full rounded-lg resize-none outline-none transition-all duration-150 ease-out"
-              style={{
-                fontSize: 17,
-                padding: 16,
-                background: "var(--bg-inset)",
-                border: "1px solid var(--border-default)",
-              }}
-            />
-
-            <div>
-              <p
-                className="mb-2"
-                style={{ fontSize: 13, color: "var(--text-tertiary)" }}
-              >
-                Or start from a template:
-              </p>
-              <div
-                className="flex gap-2 overflow-x-auto pb-1"
-                style={{ gap: 8 }}
-              >
-                {TEMPLATES.map((t) => {
-                  const Icon = t.icon;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setMission(t.mission)}
-                      className="flex flex-col items-start shrink-0 rounded-lg transition-all duration-150 ease-out cursor-pointer"
-                      style={{
-                        minWidth: 130,
-                        padding: 12,
-                        background: "var(--bg-surface)",
-                        border: "1px solid var(--border-default)",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--bg-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "var(--bg-surface)";
-                      }}
-                    >
-                      <Icon
-                        size={20}
-                        style={{ color: "var(--text-secondary)", marginBottom: 6 }}
-                      />
-                      <span
-                        className="font-medium"
-                        style={{ fontSize: 13, color: "var(--text-primary)" }}
-                      >
-                        {t.name}
-                      </span>
-                      <span
-                        className="mt-0.5"
-                        style={{ fontSize: 12, color: "var(--text-tertiary)" }}
-                      >
-                        {t.subtitle}
-                      </span>
-                    </button>
-                  );
-                })}
+      {/* Scrollable content */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="w-full max-w-[520px] mx-auto px-6 py-6">
+          {step === 1 && (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h1
+                  className="font-semibold"
+                  style={{ fontSize: 28, color: "var(--text-primary)" }}
+                >
+                  What do you want to build?
+                </h1>
+                <p
+                  className="mt-2"
+                  style={{ fontSize: 15, color: "var(--text-secondary)" }}
+                >
+                  Describe your idea in a few sentences. Your agent will figure out
+                  the rest.
+                </p>
               </div>
-            </div>
 
-            <div>
-              <label
-                className="block mb-2"
-                style={{ fontSize: 15, color: "var(--text-primary)" }}
-              >
-                Give your project a name
-              </label>
-              <input
-                type="text"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="My Awesome Project"
-                className="w-full rounded-lg outline-none transition-all duration-150 ease-out"
+              <textarea
+                value={mission}
+                onChange={(e) => setMission(e.target.value)}
+                placeholder="I want to build a SaaS that helps small businesses track their inventory..."
+                rows={4}
+                className="w-full rounded-lg resize-none outline-none transition-all duration-150 ease-out"
                 style={{
-                  fontSize: 15,
-                  height: 44,
-                  padding: "0 16px",
+                  fontSize: 17,
+                  padding: 16,
                   background: "var(--bg-inset)",
                   border: "1px solid var(--border-default)",
                 }}
               />
-            </div>
 
-            <div className="flex justify-end">
-              <button
-                onClick={() => setStep(2)}
-                disabled={!canProceedStep1}
-                className="rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                style={{
-                  width: 120,
-                  height: 44,
-                  fontSize: 15,
-                  background: "var(--accent)",
-                  color: "white",
-                }}
-                onMouseEnter={(e) => {
-                  if (canProceedStep1) {
-                    e.currentTarget.style.background = "var(--accent-hover)";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--accent)";
-                }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2 */}
-        {step === 2 && (
-          <div
-            className="flex flex-col"
-            style={{ gap: 24, transition: "opacity 150ms ease-out" }}
-          >
-            <div>
-              <h1
-                className="font-semibold"
-                style={{ fontSize: 28, color: "var(--text-primary)" }}
-              >
-                How should your agent work?
-              </h1>
-              <p
-                className="mt-2"
-                style={{
-                  fontSize: 15,
-                  color: "var(--text-secondary)",
-                  marginTop: 8,
-                }}
-              >
-                Pick a working style that matches your goals.
-              </p>
-            </div>
-
-            <div className="flex flex-col" style={{ gap: 16 }}>
-              {PERSONALITIES.map((p) => {
-                const Icon = p.icon;
-                const selected = personality === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => setPersonality(p.id)}
-                    className="flex items-start gap-4 rounded-xl text-left transition-all duration-150 ease-out cursor-pointer"
-                    style={{
-                      padding: 20,
-                      background: selected ? "var(--accent-subtle)" : "var(--bg-surface)",
-                      border: selected
-                        ? "2px solid var(--border-strong)"
-                        : "1px solid var(--border-default)",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!selected) {
-                        e.currentTarget.style.background = "var(--bg-hover)";
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!selected) {
-                        e.currentTarget.style.background = "var(--bg-surface)";
-                      }
-                    }}
-                  >
-                    <Icon
-                      size={24}
-                      style={{ color: "var(--text-secondary)", flexShrink: 0 }}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div
-                        className="font-semibold"
-                        style={{ fontSize: 16, color: "var(--text-primary)" }}
-                      >
-                        {p.name}
-                      </div>
-                      <p
-                        className="mt-1"
-                        style={{ fontSize: 14, color: "var(--text-secondary)" }}
-                      >
-                        {p.description}
-                      </p>
-                      <p
-                        className="mt-1 italic"
-                        style={{ fontSize: 13, color: "var(--text-tertiary)" }}
-                      >
-                        {p.bestFor}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="flex justify-between">
-              <button
-                onClick={() => setStep(1)}
-                className="rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer"
-                style={{
-                  height: 44,
-                  padding: "0 20px",
-                  fontSize: 15,
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                }}
-              >
-                Back
-              </button>
-              <button
-                onClick={() => setStep(3)}
-                className="rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer"
-                style={{
-                  width: 120,
-                  height: 44,
-                  fontSize: 15,
-                  background: "var(--accent)",
-                  color: "white",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--accent-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--accent)";
-                }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3 */}
-        {step === 3 && (
-          <div
-            className="flex flex-col"
-            style={{ gap: 24, transition: "opacity 150ms ease-out" }}
-          >
-            <div>
-              <h1
-                className="font-semibold"
-                style={{ fontSize: 28, color: "var(--text-primary)" }}
-              >
-                One last thing
-              </h1>
-              <p
-                className="mt-2"
-                style={{
-                  fontSize: 15,
-                  color: "var(--text-secondary)",
-                  marginTop: 8,
-                }}
-              >
-                Set up how your agent checks in and makes decisions.
-              </p>
-            </div>
-
-            <div style={{ marginTop: 24 }}>
-              <label
-                className="block mb-2 font-medium"
-                style={{ fontSize: 15, color: "var(--text-primary)" }}
-              >
-                How often should your agent check in?
-              </label>
-              <div
-                className="grid grid-cols-2 gap-2"
-                style={{ gap: 8 }}
-              >
-                {CHECKIN_OPTIONS.map((opt) => {
-                  const selected = checkinInterval === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setCheckinInterval(opt.value)}
-                      className="rounded-lg text-center transition-all duration-150 ease-out cursor-pointer"
-                      style={{
-                        padding: 14,
-                        background: selected ? "var(--accent-subtle)" : "var(--bg-surface)",
-                        border: selected
-                          ? "2px solid var(--border-strong)"
-                          : "1px solid var(--border-default)",
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!selected) {
+              <div>
+                <p
+                  className="mb-2"
+                  style={{ fontSize: 13, color: "var(--text-tertiary)" }}
+                >
+                  Or start from a template:
+                </p>
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {TEMPLATES.map((t) => {
+                    const Icon = t.icon;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setMission(t.mission)}
+                        className="flex flex-col items-start shrink-0 rounded-lg transition-all duration-150 ease-out cursor-pointer"
+                        style={{
+                          minWidth: 130,
+                          padding: 12,
+                          background: "var(--bg-surface)",
+                          border: "1px solid var(--border-default)",
+                        }}
+                        onMouseEnter={(e) => {
                           e.currentTarget.style.background = "var(--bg-hover)";
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!selected) {
+                        }}
+                        onMouseLeave={(e) => {
                           e.currentTarget.style.background = "var(--bg-surface)";
-                        }
-                      }}
-                    >
-                      <div
-                        className="font-medium"
-                        style={{ fontSize: 14, color: "var(--text-primary)" }}
+                        }}
                       >
-                        {opt.label}
-                      </div>
-                      <div
-                        className="mt-0.5"
-                        style={{ fontSize: 12, color: "var(--text-tertiary)" }}
-                      >
-                        {opt.sublabel}
-                      </div>
-                    </button>
-                  );
-                })}
+                        <Icon
+                          size={20}
+                          style={{ color: "var(--text-secondary)", marginBottom: 6 }}
+                        />
+                        <span
+                          className="font-medium"
+                          style={{ fontSize: 13, color: "var(--text-primary)" }}
+                        >
+                          {t.name}
+                        </span>
+                        <span
+                          className="mt-0.5"
+                          style={{ fontSize: 12, color: "var(--text-tertiary)" }}
+                        >
+                          {t.subtitle}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  className="block mb-2"
+                  style={{ fontSize: 15, color: "var(--text-primary)" }}
+                >
+                  Give your project a name
+                </label>
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="My Awesome Project"
+                  className="w-full rounded-lg outline-none transition-all duration-150 ease-out"
+                  style={{
+                    fontSize: 15,
+                    height: 44,
+                    padding: "0 16px",
+                    background: "var(--bg-inset)",
+                    border: "1px solid var(--border-default)",
+                  }}
+                />
               </div>
             </div>
+          )}
 
-            <div style={{ marginTop: 24 }}>
-              <label
-                className="block mb-2 font-medium"
-                style={{ fontSize: 15, color: "var(--text-primary)" }}
-              >
-                How should your agent make decisions?
-              </label>
-              <div className="flex gap-2" style={{ gap: 8 }}>
-                {AUTONOMY_OPTIONS.map((opt) => {
-                  const Icon = opt.icon;
-                  const selected = autonomyLevel === opt.id;
+          {step === 2 && (
+            <div className="flex flex-col gap-6">
+              <div>
+                <h1
+                  className="font-semibold"
+                  style={{ fontSize: 28, color: "var(--text-primary)" }}
+                >
+                  How should your agent work?
+                </h1>
+                <p
+                  className="mt-2"
+                  style={{ fontSize: 15, color: "var(--text-secondary)" }}
+                >
+                  Pick a working style that matches your goals.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                {PERSONALITIES.map((p) => {
+                  const Icon = p.icon;
+                  const selected = personality === p.id;
                   return (
                     <button
-                      key={opt.id}
+                      key={p.id}
                       type="button"
-                      onClick={() => setAutonomyLevel(opt.id)}
-                      className="flex-1 flex items-start gap-3 rounded-lg text-left transition-all duration-150 ease-out cursor-pointer"
+                      onClick={() => setPersonality(p.id)}
+                      className="flex items-start gap-4 rounded-xl text-left transition-all duration-150 ease-out cursor-pointer"
                       style={{
-                        padding: 14,
+                        padding: 20,
                         background: selected ? "var(--accent-subtle)" : "var(--bg-surface)",
-                        border: selected
-                          ? "2px solid var(--border-strong)"
-                          : "1px solid var(--border-default)",
+                        border: "2px solid",
+                        borderColor: selected ? "var(--border-strong)" : "var(--border-default)",
                       }}
                       onMouseEnter={(e) => {
-                        if (!selected) {
+                        if (!selected)
                           e.currentTarget.style.background = "var(--bg-hover)";
-                        }
                       }}
                       onMouseLeave={(e) => {
-                        if (!selected) {
+                        if (!selected)
                           e.currentTarget.style.background = "var(--bg-surface)";
-                        }
                       }}
                     >
                       <Icon
-                        size={20}
-                        style={{ color: "var(--text-secondary)", flexShrink: 0, marginTop: 1 }}
+                        size={24}
+                        style={{ color: "var(--text-secondary)", flexShrink: 0 }}
                       />
-                      <div className="min-w-0">
+                      <div className="flex-1 min-w-0">
                         <div
-                          className="font-medium"
-                          style={{ fontSize: 14, color: "var(--text-primary)" }}
+                          className="font-semibold"
+                          style={{ fontSize: 16, color: "var(--text-primary)" }}
                         >
-                          {opt.label}
+                          {p.name}
                         </div>
                         <p
-                          className="mt-0.5"
-                          style={{ fontSize: 13, color: "var(--text-secondary)" }}
+                          className="mt-1"
+                          style={{ fontSize: 14, color: "var(--text-secondary)" }}
                         >
-                          {opt.description}
+                          {p.description}
+                        </p>
+                        <p
+                          className="mt-1 italic"
+                          style={{ fontSize: 13, color: "var(--text-tertiary)" }}
+                        >
+                          {p.bestFor}
                         </p>
                       </div>
                     </button>
@@ -607,59 +336,193 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                 })}
               </div>
             </div>
+          )}
 
-            <div className="flex flex-col" style={{ gap: 12 }}>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setStep(2)}
-                  className="rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer"
-                  style={{
-                    height: 44,
-                    padding: "0 20px",
-                    fontSize: 15,
-                    background: "transparent",
-                    color: "var(--text-secondary)",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                  }}
+          {step === 3 && (
+            <div className="flex flex-col gap-7">
+              <div>
+                <h1
+                  className="font-semibold"
+                  style={{ fontSize: 28, color: "var(--text-primary)" }}
                 >
-                  Back
-                </button>
-                <button
-                  onClick={handleSubmit}
-                  disabled={isSubmitting}
-                  className="flex-1 rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed"
-                  style={{
-                    height: 44,
-                    fontSize: 16,
-                    background: "var(--accent)",
-                    color: "white",
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isSubmitting) {
-                      e.currentTarget.style.background = "var(--accent-hover)";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "var(--accent)";
-                  }}
-                >
-                  {isSubmitting ? "Starting..." : "Start Building"}
-                </button>
-              </div>
-              {error && (
+                  One last thing
+                </h1>
                 <p
-                  className="text-[13px]"
-                  style={{ color: "var(--status-error)" }}
+                  className="mt-2"
+                  style={{ fontSize: 15, color: "var(--text-secondary)" }}
                 >
-                  {error}
+                  Set up how your agent checks in and makes decisions.
                 </p>
-              )}
+              </div>
+
+              <div>
+                <label
+                  className="block mb-2 font-medium"
+                  style={{ fontSize: 15, color: "var(--text-primary)" }}
+                >
+                  How often should your agent check in?
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {CHECKIN_OPTIONS.map((opt) => {
+                    const selected = checkinInterval === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setCheckinInterval(opt.value)}
+                        className="rounded-lg text-center transition-all duration-150 ease-out cursor-pointer"
+                        style={{
+                          padding: 14,
+                          background: selected ? "var(--accent-subtle)" : "var(--bg-surface)",
+                          border: "2px solid",
+                          borderColor: selected ? "var(--border-strong)" : "var(--border-default)",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!selected)
+                            e.currentTarget.style.background = "var(--bg-hover)";
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!selected)
+                            e.currentTarget.style.background = "var(--bg-surface)";
+                        }}
+                      >
+                        <div
+                          className="font-medium"
+                          style={{ fontSize: 14, color: "var(--text-primary)" }}
+                        >
+                          {opt.label}
+                        </div>
+                        <div
+                          className="mt-0.5"
+                          style={{ fontSize: 12, color: "var(--text-tertiary)" }}
+                        >
+                          {opt.sublabel}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  className="block mb-2 font-medium"
+                  style={{ fontSize: 15, color: "var(--text-primary)" }}
+                >
+                  How should your agent make decisions?
+                </label>
+                <div className="flex gap-2">
+                  {AUTONOMY_OPTIONS.map((opt) => {
+                    const Icon = opt.icon;
+                    const selected = autonomyLevel === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setAutonomyLevel(opt.id)}
+                        className="flex-1 flex items-start gap-3 rounded-lg text-left transition-all duration-150 ease-out cursor-pointer"
+                        style={{
+                          padding: 14,
+                          background: selected ? "var(--accent-subtle)" : "var(--bg-surface)",
+                          border: "2px solid",
+                          borderColor: selected ? "var(--border-strong)" : "var(--border-default)",
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!selected)
+                            e.currentTarget.style.background = "var(--bg-hover)";
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!selected)
+                            e.currentTarget.style.background = "var(--bg-surface)";
+                        }}
+                      >
+                        <Icon
+                          size={20}
+                          style={{ color: "var(--text-secondary)", flexShrink: 0, marginTop: 1 }}
+                        />
+                        <div className="min-w-0">
+                          <div
+                            className="font-medium"
+                            style={{ fontSize: 14, color: "var(--text-primary)" }}
+                          >
+                            {opt.label}
+                          </div>
+                          <p
+                            className="mt-0.5"
+                            style={{ fontSize: 13, color: "var(--text-secondary)" }}
+                          >
+                            {opt.description}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Pinned footer */}
+      <div
+        className="shrink-0 border-t"
+        style={{
+          borderColor: "var(--border-default)",
+          background: "var(--bg-app)",
+        }}
+      >
+        <div className="w-full max-w-[520px] mx-auto px-6 py-4 flex items-center gap-3">
+          {step > 1 && (
+            <button
+              onClick={handleBack}
+              className="rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer"
+              style={{
+                height: 44,
+                padding: "0 20px",
+                fontSize: 15,
+                color: "var(--text-secondary)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              Back
+            </button>
+          )}
+          <button
+            onClick={handleNext}
+            disabled={!canProceed}
+            className="flex-1 rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              height: 44,
+              fontSize: 15,
+              background: "var(--accent)",
+              color: "white",
+            }}
+            onMouseEnter={(e) => {
+              if (canProceed)
+                e.currentTarget.style.background = "var(--accent-hover)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "var(--accent)";
+            }}
+          >
+            {step === 3
+              ? isSubmitting
+                ? "Starting..."
+                : "Start Building"
+              : "Next"}
+          </button>
+        </div>
+        {error && (
+          <div className="w-full max-w-[520px] mx-auto px-6 pb-3">
+            <p className="text-[13px]" style={{ color: "var(--status-error)" }}>
+              {error}
+            </p>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { Plus, Settings } from "lucide-react";
+import { Plus, FolderOpen, Settings } from "lucide-react";
 import type { Agent, AgentStatus } from "@/types";
 
 interface SidebarProps {
@@ -6,6 +6,7 @@ interface SidebarProps {
   selectedAgentId: string | null;
   onSelectAgent: (id: string) => void;
   onNewAgent: () => void;
+  onImportAgent: () => void;
   onSettings: () => void;
 }
 
@@ -28,6 +29,7 @@ export default function Sidebar({
   selectedAgentId,
   onSelectAgent,
   onNewAgent,
+  onImportAgent,
   onSettings,
 }: SidebarProps) {
   return (
@@ -40,23 +42,42 @@ export default function Sidebar({
       }}
     >
       <div
-        className="px-5 pt-5 pb-4 text-[11px] font-semibold tracking-[0.12em] uppercase"
+        className="px-5 pt-5 pb-4 text-[11px] font-semibold tracking-[0.12em] uppercase select-none"
+        data-tauri-drag-region
         style={{ color: "var(--text-tertiary)" }}
       >
         Agent Founder
       </div>
 
-      <div className="flex-1 overflow-y-auto px-2">
+      <div className="flex-1 overflow-y-auto px-2 min-h-0">
+        {agents.length === 0 && (
+          <div
+            className="text-[13px] px-3 py-6 text-center select-none"
+            style={{ color: "var(--text-tertiary)" }}
+          >
+            No agents yet
+          </div>
+        )}
         {agents.map((agent) => {
           const selected = agent.id === selectedAgentId;
           return (
             <button
               key={agent.id}
               onClick={() => onSelectAgent(agent.id)}
-              className="w-full text-left rounded-md px-3 py-2.5 mb-0.5 transition-colors cursor-pointer"
+              className="w-full text-left rounded-lg px-3 py-2.5 mb-0.5 transition-all duration-100 ease-out cursor-pointer"
               style={{
                 background: selected ? "var(--accent-subtle)" : "transparent",
-                borderLeft: selected ? "2px solid var(--accent)" : "2px solid transparent",
+                borderLeft: selected
+                  ? "2px solid var(--accent)"
+                  : "2px solid transparent",
+              }}
+              onMouseEnter={(e) => {
+                if (!selected)
+                  e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                if (!selected)
+                  e.currentTarget.style.background = "transparent";
               }}
             >
               <div className="flex items-center gap-2">
@@ -88,7 +109,7 @@ export default function Sidebar({
       >
         <button
           onClick={onNewAgent}
-          className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-[13px] font-medium transition-colors cursor-pointer"
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[14px] font-medium transition-all duration-100 ease-out cursor-pointer"
           style={{ color: "var(--text-secondary)" }}
           onMouseEnter={(e) =>
             (e.currentTarget.style.background = "var(--bg-hover)")
@@ -97,12 +118,12 @@ export default function Sidebar({
             (e.currentTarget.style.background = "transparent")
           }
         >
-          <Plus size={15} strokeWidth={2} />
+          <Plus size={16} strokeWidth={2} />
           New Agent
         </button>
         <button
-          onClick={onSettings}
-          className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-[13px] font-medium transition-colors cursor-pointer"
+          onClick={onImportAgent}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[14px] font-medium transition-all duration-100 ease-out cursor-pointer"
           style={{ color: "var(--text-secondary)" }}
           onMouseEnter={(e) =>
             (e.currentTarget.style.background = "var(--bg-hover)")
@@ -111,7 +132,21 @@ export default function Sidebar({
             (e.currentTarget.style.background = "transparent")
           }
         >
-          <Settings size={15} strokeWidth={2} />
+          <FolderOpen size={16} strokeWidth={2} />
+          Import Project
+        </button>
+        <button
+          onClick={onSettings}
+          className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[14px] font-medium transition-all duration-100 ease-out cursor-pointer"
+          style={{ color: "var(--text-secondary)" }}
+          onMouseEnter={(e) =>
+            (e.currentTarget.style.background = "var(--bg-hover)")
+          }
+          onMouseLeave={(e) =>
+            (e.currentTarget.style.background = "transparent")
+          }
+        >
+          <Settings size={16} strokeWidth={2} />
           Settings
         </button>
       </div>

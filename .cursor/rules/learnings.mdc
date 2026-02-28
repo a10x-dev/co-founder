@@ -1,0 +1,34 @@
+---
+description: Hard-won learnings and pitfalls to avoid
+alwaysApply: true
+---
+
+# Learnings & Pitfalls
+
+## Tailwind CSS v4
+
+- `@import "tailwindcss"` includes preflight reset. NEVER add a separate `* { margin: 0; padding: 0; }` — it loads after Tailwind utilities in the cascade and silently kills all padding/margin classes.
+- If Tailwind spacing classes seem broken, check `index.css` for competing resets before adding `!important`.
+
+## Tauri 2 / macOS
+
+- The native title bar sits above the webview. No need for extra top padding to clear traffic lights — the webview already starts below them.
+- Use `data-tauri-drag-region` on header areas to enable window dragging.
+- Window config lives in `src-tauri/tauri.conf.json` under `app.windows`.
+
+## Layout
+
+- Root layout uses `h-screen overflow-hidden` on the flex container in `App.tsx`.
+- The `<main>` tag has `overflow-y-auto` so views can scroll independently.
+- For wizard/form views that need a pinned footer: use `h-full flex flex-col` with `flex-1 min-h-0 overflow-y-auto` for content and `shrink-0` for the footer. This prevents buttons from scrolling off-screen.
+
+## Rust Backend
+
+- Tilde paths (`~/...`) must be expanded before any filesystem operations. Use `expand_home()` helper in `commands.rs`.
+- `read_text_file` command should validate paths to prevent traversal attacks.
+
+## UX
+
+- Every UI decision must be carefully considered — this is a premium product.
+- Selectable option cards: use consistent border width (2px always) and toggle `borderColor` only. Changing border width causes layout shift.
+- Inline `style={{}}` hover handlers are verbose but necessary for CSS-var-based theming since Tailwind can't reference CSS vars in hover states easily.

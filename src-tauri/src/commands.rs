@@ -1,4 +1,5 @@
 use chrono::Utc;
+use std::fs;
 use uuid::Uuid;
 
 use crate::models::*;
@@ -103,4 +104,69 @@ pub async fn pause_agent(id: String, state: tauri::State<'_, AppState>) -> Resul
 pub async fn stop_agent(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
     state.db.update_agent_status(&uuid, &AgentStatus::Idle)
+}
+
+#[derive(serde::Deserialize)]
+pub struct ImportAgentRequest {
+    pub workspace_path: String,
+    pub name: String,
+    pub mission: String,
+    pub personality: String,
+    pub checkin_interval_secs: u64,
+    pub autonomy_level: String,
+}
+
+#[tauri::command]
+pub async fn import_agent(
+    req: ImportAgentRequest,
+    state: tauri::State<'_, AppState>,
+) -> Result<Agent, String> {
+    let expanded = expand_home(&req.workspace_path);
+    let founder_dir = format!("{}/.founder", expanded.trim_end_matches('/'));
+    let already_exists = std::path::Path::new(&founder_dir).exists();
+
+    let workspace = if already_exists {
+        expanded
+    } else {
+        StateManager::init_existing_workspace(&expanded)?
+    };
+
+    let agent = Agent {
+        id: Uuid::new_v4(),
+        name: req.name,
+        workspace: workspace.clone(),
+        soul_path: format!("{}/.founder/SOUL.md", workspace),
+        mission: req.mission,
+        autonomy_level: AutonomyLevel::from_str(&req.autonomy_level),
+        allowed_tools: String::new(),
+        status: AgentStatus::Idle,
+        current_session_id: None,
+        max_session_duration_secs: 900,
+        created_at: Utc::now().to_rfc3339(),
+        last_heartbeat_at: None,
+        total_sessions: 0,
+        personality: req.personality,
+        checkin_interval_secs: req.checkin_interval_secs,
+    };
+
+    state.db.create_agent(&agent)?;
+    Ok(agent)
+}
+
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String, String> {
+    let canonical = std::path::Path::new(&path);
+    if canonical.components().any(|c| c == std::path::Component::ParentDir) {
+        return Err("Path traversal not allowed".into());
+    }
+    fs::read_to_string(&path).map_err(|e| format!("Could not read file: {e}"))
+}
+
+fn expand_home(path: &str) -> String {
+    if path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{}{}", home, &path[1..]);
+        }
+    }
+    path.to_string()
 }

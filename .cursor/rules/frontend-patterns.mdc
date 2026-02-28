@@ -1,0 +1,30 @@
+---
+description: Frontend coding patterns and conventions
+globs: "src/**/*.{tsx,ts}"
+alwaysApply: false
+---
+
+# Frontend Patterns
+
+## Styling
+
+- Use CSS variables from `index.css` for all colors: `var(--text-primary)`, `var(--bg-surface)`, etc.
+- Prefer Tailwind classes for spacing, layout, typography. Use inline `style={{}}` only for CSS variable colors and dynamic values.
+- Consistent border radius: `rounded-lg` for buttons/inputs, `rounded-xl` for cards/panels.
+
+## Components
+
+- Shared constants (wizard options, configs) go in `src/lib/` — never duplicate across views.
+- Views receive callbacks from `App.tsx` for navigation (`onCancel`, `onCreated`, etc.) — they don't manage routing.
+- The `useAgents` hook handles agent data fetching with a `refetch` function.
+
+## Wizard Views (Create/Import)
+
+- Layout: `h-full flex flex-col` outer, `flex-1 min-h-0 overflow-y-auto` scrollable content, `shrink-0` pinned footer.
+- Footer always visible with Back/Next buttons regardless of scroll position.
+- Shared constants imported from `@/lib/wizardConstants`.
+
+## API
+
+- All Tauri commands wrapped in `src/lib/api.ts` as typed async functions.
+- New commands require: Rust handler in `commands.rs`, registration in `lib.rs`, TS wrapper in `api.ts`, type in `types/index.ts`.

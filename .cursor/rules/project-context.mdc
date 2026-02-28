@@ -1,0 +1,34 @@
+---
+description: Project context and architecture for Agent Founder
+alwaysApply: true
+---
+
+# Agent Founder
+
+Desktop app for managing autonomous AI coding agents powered by Claude Code.
+
+## Tech Stack
+
+- **Frontend**: React 19 + TypeScript + Tailwind CSS v4 + Vite 6
+- **Backend**: Rust + Tauri 2
+- **Database**: SQLite (via rusqlite)
+- **Font**: Geist (loaded via CDN)
+- **Icons**: lucide-react
+
+## Architecture
+
+- `src/` — React frontend (views, components, hooks, lib, types)
+- `src-tauri/src/` — Rust backend (commands, models, db, state, process pool)
+- `src/lib/api.ts` — frontend wrapper for Tauri `invoke()` calls
+- `src/lib/wizardConstants.ts` — shared constants for create/import wizard flows
+- `src/types/index.ts` — all TypeScript interfaces
+- `.founder/` — per-agent workspace directory (SOUL.md, MISSION.md, STATE.md, etc.)
+
+## Key Patterns
+
+- Views in `src/views/` — full-page components rendered by `App.tsx` router
+- Single sidebar + main content layout via flex in `App.tsx`
+- State lives in `App.tsx` (selected agent, current view) — views are stateless re: navigation
+- Tauri commands defined in `src-tauri/src/commands.rs`, registered in `lib.rs`
+- CSS variables defined in `src/index.css` `:root` for theming (warm neutral palette)
+- Tailwind v4 imported via `@import "tailwindcss"` — no tailwind.config needed

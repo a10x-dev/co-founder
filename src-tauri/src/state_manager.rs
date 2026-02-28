@@ -32,6 +32,45 @@ impl StateManager {
         Ok(workspace_path)
     }
 
+    pub fn init_existing_workspace(path: &str) -> Result<String, String> {
+        let expanded = expand_tilde(path);
+        let workspace_path = std::path::Path::new(&expanded);
+
+        if !workspace_path.exists() {
+            return Err(format!("Folder does not exist: {}", expanded));
+        }
+        if !workspace_path.is_dir() {
+            return Err(format!("Path is not a folder: {}", expanded));
+        }
+
+        let founder_path = format!("{}/.founder", expanded);
+        fs::create_dir_all(&founder_path)
+            .map_err(|e| format!("Failed to create .founder directory: {e}"))?;
+
+        let name = workspace_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Project");
+
+        let templates = vec![
+            ("SOUL.md", default_soul_template("move_fast")),
+            ("MISSION.md", default_mission_template(name)),
+            ("STATE.md", default_state_template()),
+            ("HEARTBEAT.md", default_heartbeat_template()),
+            ("JOURNAL.md", default_journal_template()),
+        ];
+
+        for (filename, content) in templates {
+            let file_path = format!("{}/{}", founder_path, filename);
+            if !Path::new(&file_path).exists() {
+                fs::write(&file_path, content)
+                    .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+            }
+        }
+
+        Ok(expanded)
+    }
+
     pub fn get_soul_content(workspace: &str, personality: &str) -> String {
         let soul_path = format!("{}/.founder/SOUL.md", workspace);
         if let Ok(content) = fs::read_to_string(&soul_path) {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, CreateAgentRequest, WorkSessionLog, GlobalSettings } from "@/types";
+import type { Agent, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -43,4 +43,12 @@ export async function pauseAgent(id: string): Promise<void> {
 
 export async function stopAgent(id: string): Promise<void> {
   return invoke("stop_agent", { id });
+}
+
+export async function importAgent(req: ImportAgentRequest): Promise<Agent> {
+  return invoke("import_agent", { req });
+}
+
+export async function readTextFile(path: string): Promise<string> {
+  return invoke("read_text_file", { path });
 }

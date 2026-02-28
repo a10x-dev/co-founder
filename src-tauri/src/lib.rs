@@ -33,6 +33,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|app| {
             let open_item = MenuItem::with_id(app, "open", "Open Agent Founder", true, None::<&str>)?;
@@ -92,6 +93,8 @@ pub fn run() {
             commands::start_agent,
             commands::pause_agent,
             commands::stop_agent,
+            commands::import_agent,
+            commands::read_text_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

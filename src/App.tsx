@@ -3,9 +3,10 @@ import Sidebar from "@/components/Sidebar";
 import HomeView from "@/views/HomeView";
 import AgentDetailView from "@/views/AgentDetailView";
 import CreateAgentView from "@/views/CreateAgentView";
+import ImportAgentView from "@/views/ImportAgentView";
 import { useAgents } from "@/hooks/useAgents";
 
-type View = "home" | "create" | "settings";
+type View = "home" | "create" | "import" | "settings";
 
 export default function App() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -32,6 +33,11 @@ export default function App() {
     setView("home");
   };
 
+  const handleImportAgent = () => {
+    setSelectedAgentId(null);
+    setView("import");
+  };
+
   const selectedAgent = selectedAgentId
     ? agents.find((a) => a.id === selectedAgentId)
     : null;
@@ -43,6 +49,7 @@ export default function App() {
         selectedAgentId={selectedAgentId}
         onSelectAgent={handleSelectAgent}
         onNewAgent={handleNewAgent}
+        onImportAgent={handleImportAgent}
         onSettings={handleSettings}
       />
 
@@ -60,6 +67,11 @@ export default function App() {
         ) : view === "create" ? (
           <CreateAgentView
             onCreated={handleAgentCreated}
+            onCancel={() => setView("home")}
+          />
+        ) : view === "import" ? (
+          <ImportAgentView
+            onImported={handleAgentCreated}
             onCancel={() => setView("home")}
           />
         ) : view === "settings" ? (
@@ -84,6 +96,7 @@ export default function App() {
             agents={agents}
             onSelectAgent={handleSelectAgent}
             onNewAgent={handleNewAgent}
+            onImportAgent={handleImportAgent}
             onRefetch={refetch}
           />
         )}

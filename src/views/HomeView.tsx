@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Eye, Pause, Play } from "lucide-react";
+import { Plus, Eye, Pause, Play, FolderOpen } from "lucide-react";
 import type { Agent, AgentStatus } from "@/types";
 import { startAgent, pauseAgent } from "@/lib/api";
 
@@ -38,6 +38,7 @@ interface HomeViewProps {
   agents: Agent[];
   onSelectAgent: (id: string) => void;
   onNewAgent: () => void;
+  onImportAgent: () => void;
   onRefetch: () => void;
 }
 
@@ -45,6 +46,7 @@ export default function HomeView({
   agents,
   onSelectAgent,
   onNewAgent,
+  onImportAgent,
   onRefetch,
 }: HomeViewProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -77,16 +79,13 @@ export default function HomeView({
 
   if (agents.length === 0) {
     return (
-      <div
-        className="max-w-[860px] mx-auto px-8 pt-10 pb-8"
-        style={{ paddingLeft: 32, paddingRight: 32, paddingTop: 40 }}
-      >
-        <div className="flex flex-col items-center justify-center py-20">
+      <div className="flex items-center justify-center h-full">
+        <div className="flex flex-col items-center justify-center" style={{ marginTop: -32 }}>
           <div
             className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6"
             style={{ background: "var(--bg-inset)" }}
           >
-            <Plus size={32} strokeWidth={1.5} style={{ color: "var(--text-tertiary)" }} />
+            <Plus size={28} strokeWidth={1.5} style={{ color: "var(--text-tertiary)" }} />
           </div>
           <h2
             className="text-[22px] font-semibold mb-2"
@@ -100,24 +99,43 @@ export default function HomeView({
           >
             Create your first agent to get started
           </p>
-          <button
-            onClick={onNewAgent}
-            className="flex items-center gap-2 px-6 rounded-lg font-medium text-[15px] transition-all duration-150 ease-out cursor-pointer"
-            style={{
-              height: 44,
-              background: "var(--accent)",
-              color: "white",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "var(--accent-hover)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "var(--accent)";
-            }}
-          >
-            <Plus size={18} strokeWidth={2} />
-            Create Agent
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={onNewAgent}
+              className="flex items-center gap-2 px-6 h-11 rounded-lg font-medium text-[15px] transition-all duration-150 ease-out cursor-pointer"
+              style={{
+                background: "var(--accent)",
+                color: "white",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--accent-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--accent)";
+              }}
+            >
+              <Plus size={18} strokeWidth={2} />
+              Create Agent
+            </button>
+            <button
+              onClick={onImportAgent}
+              className="flex items-center gap-2 px-6 h-11 rounded-lg font-medium text-[15px] transition-all duration-150 ease-out cursor-pointer"
+              style={{
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
+                color: "var(--text-secondary)",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-surface)";
+              }}
+            >
+              <FolderOpen size={18} strokeWidth={2} />
+              Import Project
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -125,8 +143,7 @@ export default function HomeView({
 
   return (
     <div
-      className="max-w-[860px] mx-auto"
-      style={{ paddingLeft: 32, paddingRight: 32, paddingTop: 40 }}
+      className="max-w-[860px] mx-auto px-8 pt-10"
     >
       <h1
         className="text-[28px] font-semibold mb-1"
@@ -277,35 +294,50 @@ export default function HomeView({
           );
         })}
 
-        <button
-          onClick={onNewAgent}
-          className="rounded-xl border-2 border-dashed flex flex-col items-center justify-center min-h-[180px] transition-all duration-150 ease-out cursor-pointer"
-          style={{
-            background: "var(--bg-app)",
-            borderColor: "var(--border-default)",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--bg-hover)";
-            e.currentTarget.style.borderColor = "var(--text-tertiary)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "var(--bg-app)";
-            e.currentTarget.style.borderColor = "var(--border-default)";
-          }}
-        >
-          <Plus
-            size={28}
-            strokeWidth={1.5}
-            className="mb-2"
-            style={{ color: "var(--text-tertiary)" }}
-          />
-          <span
-            className="text-[15px] font-medium"
-            style={{ color: "var(--text-secondary)" }}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={onNewAgent}
+            className="rounded-xl border-2 border-dashed flex flex-col items-center justify-center py-10 transition-all duration-150 ease-out cursor-pointer"
+            style={{
+              background: "var(--bg-app)",
+              borderColor: "var(--border-default)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-hover)";
+              e.currentTarget.style.borderColor = "var(--text-tertiary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "var(--bg-app)";
+              e.currentTarget.style.borderColor = "var(--border-default)";
+            }}
           >
-            Create a new agent
-          </span>
-        </button>
+            <Plus size={24} strokeWidth={1.5} className="mb-2" style={{ color: "var(--text-tertiary)" }} />
+            <span className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>
+              New agent
+            </span>
+          </button>
+          <button
+            onClick={onImportAgent}
+            className="rounded-xl border-2 border-dashed flex flex-col items-center justify-center py-10 transition-all duration-150 ease-out cursor-pointer"
+            style={{
+              background: "var(--bg-app)",
+              borderColor: "var(--border-default)",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "var(--bg-hover)";
+              e.currentTarget.style.borderColor = "var(--text-tertiary)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "var(--bg-app)";
+              e.currentTarget.style.borderColor = "var(--border-default)";
+            }}
+          >
+            <FolderOpen size={24} strokeWidth={1.5} className="mb-2" style={{ color: "var(--text-tertiary)" }} />
+            <span className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>
+              Import project
+            </span>
+          </button>
+        </div>
       </div>
     </div>
   );

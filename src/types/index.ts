@@ -29,6 +29,15 @@ export interface CreateAgentRequest {
   autonomy_level: string;
 }
 
+export interface ImportAgentRequest {
+  workspace_path: string;
+  name: string;
+  mission: string;
+  personality: string;
+  checkin_interval_secs: number;
+  autonomy_level: string;
+}
+
 export interface WorkSessionLog {
   id: string;
   agent_id: string;
