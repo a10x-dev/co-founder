@@ -1,7 +1,9 @@
 use chrono::Utc;
 use std::fs;
+use tauri::Emitter;
 use uuid::Uuid;
 
+use crate::cli_adapter::detect_claude_path;
 use crate::models::*;
 use crate::state_manager::StateManager;
 use crate::AppState;
@@ -23,7 +25,12 @@ pub async fn create_agent(
     state: tauri::State<'_, AppState>,
 ) -> Result<Agent, String> {
     let settings = state.db.get_global_settings()?;
-    let workspace = StateManager::create_workspace(&settings.default_workspace_root, &req.name)?;
+    let workspace = StateManager::create_workspace(
+        &settings.default_workspace_root,
+        &req.name,
+        &req.personality,
+        &req.mission,
+    )?;
 
     let agent = Agent {
         id: Uuid::new_v4(),
@@ -59,12 +66,6 @@ pub async fn update_agent_status(
 }
 
 #[tauri::command]
-pub async fn delete_agent(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
-    state.db.delete_agent(&uuid)
-}
-
-#[tauri::command]
 pub async fn get_work_sessions(
     agent_id: String,
     state: tauri::State<'_, AppState>,
@@ -85,35 +86,53 @@ pub async fn update_global_settings(
     settings: GlobalSettings,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    state.db.update_global_settings(&settings)
+    state.db.update_global_settings(&settings)?;
+
+    if let Ok(mut cli) = state.cli.write() {
+        *cli = crate::cli_adapter::CliAdapter::new(settings.claude_cli_path.clone());
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn start_agent(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+pub async fn start_agent(
+    id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
-    state.db.update_agent_status(&uuid, &AgentStatus::Running)
+    let agent = state.db.get_agent(&uuid)?;
+
+    state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
+    state
+        .heartbeat
+        .start_agent_heartbeat(id.clone(), agent.checkin_interval_secs, app.clone());
+
+    let payload = serde_json::json!({
+        "agent_id": id,
+        "timestamp": Utc::now().to_rfc3339(),
+        "reason": "start",
+    });
+    let _ = app.emit("heartbeat-tick", payload);
+
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn pause_agent(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.heartbeat.stop_agent_heartbeat(&id);
+    let _ = state.process_pool.kill_agent(&id);
     state.db.update_agent_status(&uuid, &AgentStatus::Paused)
 }
 
 #[tauri::command]
 pub async fn stop_agent(id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.heartbeat.stop_agent_heartbeat(&id);
+    let _ = state.process_pool.kill_agent(&id);
     state.db.update_agent_status(&uuid, &AgentStatus::Idle)
-}
-
-#[derive(serde::Deserialize)]
-pub struct ImportAgentRequest {
-    pub workspace_path: String,
-    pub name: String,
-    pub mission: String,
-    pub personality: String,
-    pub checkin_interval_secs: u64,
-    pub autonomy_level: String,
 }
 
 #[tauri::command]
@@ -128,7 +147,7 @@ pub async fn import_agent(
     let workspace = if already_exists {
         expanded
     } else {
-        StateManager::init_existing_workspace(&expanded)?
+        StateManager::init_existing_workspace(&expanded, &req.personality, &req.mission)?
     };
 
     let agent = Agent {
@@ -154,12 +173,43 @@ pub async fn import_agent(
 }
 
 #[tauri::command]
-pub async fn read_text_file(path: String) -> Result<String, String> {
-    let canonical = std::path::Path::new(&path);
-    if canonical.components().any(|c| c == std::path::Component::ParentDir) {
-        return Err("Path traversal not allowed".into());
+pub async fn delete_agent(
+    id: String,
+    remove_founder_files: Option<bool>,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let remove_founder = remove_founder_files.unwrap_or(false);
+
+    state.heartbeat.stop_agent_heartbeat(&id);
+    let _ = state.process_pool.kill_agent(&id);
+
+    if remove_founder {
+        let agent = state.db.get_agent(&uuid)?;
+        let founder_path = format!("{}/.founder", agent.workspace.trim_end_matches('/'));
+        if std::path::Path::new(&founder_path).exists() {
+            fs::remove_dir_all(&founder_path)
+                .map_err(|e| format!("Failed to remove .founder files: {e}"))?;
+        }
     }
-    fs::read_to_string(&path).map_err(|e| format!("Could not read file: {e}"))
+
+    state.db.delete_agent(&uuid)
+}
+
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String, String> {
+    let expanded = expand_home(&path);
+    let canonical = std::fs::canonicalize(&expanded)
+        .map_err(|e| format!("Could not read file: {e}"))?;
+
+    let home = std::env::var("HOME").map_err(|_| "Could not determine HOME directory")?;
+    let home_path = std::path::Path::new(&home);
+
+    if !canonical.starts_with(home_path) {
+        return Err("Reading files outside your home directory is not allowed".into());
+    }
+
+    fs::read_to_string(canonical).map_err(|e| format!("Could not read file: {e}"))
 }
 
 fn expand_home(path: &str) -> String {
@@ -169,4 +219,9 @@ fn expand_home(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[tauri::command]
+pub async fn detect_claude_cli() -> Result<Option<String>, String> {
+    Ok(detect_claude_path())
 }

@@ -13,7 +13,7 @@ impl WorkSessionEngine {
     pub fn run_session(
         cli: &CliAdapter,
         agent: &Agent,
-        _pool: &ProcessPool,
+        pool: &ProcessPool,
         db: &Database,
         _app_handle: tauri::AppHandle,
     ) -> Result<WorkSessionLog, String> {
@@ -41,13 +41,32 @@ impl WorkSessionEngine {
             allowed_tools: agent.allowed_tools.clone(),
         };
 
-        let result = cli.run_turn(config)?;
+        let result = match cli.run_turn(config, Some(pool)) {
+            Ok(result) => result,
+            Err(e) => {
+                let log = WorkSessionLog {
+                    id: session_uuid,
+                    agent_id: agent.id,
+                    session_id: String::new(),
+                    started_at,
+                    ended_at: Some(Utc::now().to_rfc3339()),
+                    turns: 0,
+                    trigger: SessionTrigger::Heartbeat,
+                    outcome: SessionOutcome::Error,
+                    summary: format!("Failed to start session: {e}"),
+                    events_json: "[]".to_string(),
+                };
+                db.log_work_session(&log)?;
+                return Ok(log);
+            }
+        };
 
-        let mut all_events = result.events.clone();
+        let text_output = result.text_output;
+        let mut all_events = result.events;
         let mut turns: u32 = 1;
-        let mut final_session_id = result.session_id.clone();
+        let mut final_session_id = result.session_id;
 
-        if result.text_output.contains("HEARTBEAT_OK") {
+        if text_output.contains("HEARTBEAT_OK") {
             let log = WorkSessionLog {
                 id: session_uuid,
                 agent_id: agent.id,
@@ -99,7 +118,7 @@ impl WorkSessionEngine {
                 allowed_tools: agent.allowed_tools.clone(),
             };
 
-            match cli.run_turn(resume_config) {
+            match cli.run_turn(resume_config, Some(pool)) {
                 Ok(turn_result) => {
                     turns += 1;
                     if let Some(ref sid) = turn_result.session_id {

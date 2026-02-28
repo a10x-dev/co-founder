@@ -46,6 +46,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
 
       setFolderPath(selected);
       setError(null);
+      setDetectedType(null);
 
       const folderName = selected.split("/").filter(Boolean).pop() ?? "My Project";
       setProjectName(folderName);

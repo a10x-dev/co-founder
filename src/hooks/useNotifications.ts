@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import {
   isPermissionGranted,
   requestPermission,
@@ -5,7 +6,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 
 export function useNotifications() {
-  const notify = async (title: string, body: string) => {
+  const notify = useCallback(async (title: string, body: string) => {
     try {
       let granted = await isPermissionGranted();
       if (!granted) {
@@ -18,7 +19,7 @@ export function useNotifications() {
     } catch {
       // Running outside Tauri (dev in browser) — silently ignore
     }
-  };
+  }, []);
 
   return { notify };
 }

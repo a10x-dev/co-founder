@@ -17,8 +17,8 @@ export async function updateAgentStatus(id: string, status: string): Promise<voi
   return invoke("update_agent_status", { id, status });
 }
 
-export async function deleteAgent(id: string): Promise<void> {
-  return invoke("delete_agent", { id });
+export async function deleteAgent(id: string, removeFounderFiles = false): Promise<void> {
+  return invoke("delete_agent", { id, remove_founder_files: removeFounderFiles });
 }
 
 export async function getWorkSessions(agentId: string): Promise<WorkSessionLog[]> {
@@ -51,4 +51,8 @@ export async function importAgent(req: ImportAgentRequest): Promise<Agent> {
 
 export async function readTextFile(path: string): Promise<string> {
   return invoke("read_text_file", { path });
+}
+
+export async function detectClaudeCli(): Promise<string | null> {
+  return invoke("detect_claude_cli");
 }

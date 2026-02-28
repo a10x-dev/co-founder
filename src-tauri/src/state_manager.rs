@@ -4,7 +4,12 @@ use std::path::Path;
 pub struct StateManager;
 
 impl StateManager {
-    pub fn create_workspace(root: &str, name: &str) -> Result<String, String> {
+    pub fn create_workspace(
+        root: &str,
+        name: &str,
+        personality: &str,
+        mission: &str,
+    ) -> Result<String, String> {
         let expanded_root = expand_tilde(root);
         let slug = slugify(name);
         let workspace_path = format!("{}/{}", expanded_root, slug);
@@ -14,8 +19,8 @@ impl StateManager {
             .map_err(|e| format!("Failed to create workspace: {e}"))?;
 
         let templates = vec![
-            ("SOUL.md", default_soul_template("move_fast")),
-            ("MISSION.md", default_mission_template(name)),
+            ("SOUL.md", default_soul_template(personality)),
+            ("MISSION.md", default_mission_template(name, mission)),
             ("STATE.md", default_state_template()),
             ("HEARTBEAT.md", default_heartbeat_template()),
             ("JOURNAL.md", default_journal_template()),
@@ -32,7 +37,11 @@ impl StateManager {
         Ok(workspace_path)
     }
 
-    pub fn init_existing_workspace(path: &str) -> Result<String, String> {
+    pub fn init_existing_workspace(
+        path: &str,
+        personality: &str,
+        mission: &str,
+    ) -> Result<String, String> {
         let expanded = expand_tilde(path);
         let workspace_path = std::path::Path::new(&expanded);
 
@@ -53,8 +62,8 @@ impl StateManager {
             .unwrap_or("Project");
 
         let templates = vec![
-            ("SOUL.md", default_soul_template("move_fast")),
-            ("MISSION.md", default_mission_template(name)),
+            ("SOUL.md", default_soul_template(personality)),
+            ("MISSION.md", default_mission_template(name, mission)),
             ("STATE.md", default_state_template()),
             ("HEARTBEAT.md", default_heartbeat_template()),
             ("JOURNAL.md", default_journal_template()),
@@ -151,21 +160,27 @@ You are a fast-moving builder. You ship first, iterate second. Bias toward actio
     }
 }
 
-fn default_mission_template(name: &str) -> String {
+fn default_mission_template(name: &str, mission: &str) -> String {
+    let objective = if mission.trim().is_empty() {
+        "[Define the agent's mission here]"
+    } else {
+        mission.trim()
+    };
+
     format!(
         r#"# Mission
 
 Agent: {}
 
 ## Objective
-[Define the agent's mission here]
+{}
 
 ## Success Criteria
 - [ ] Core functionality works
 - [ ] Code is clean and maintainable
 - [ ] Key features are tested
 "#,
-        name
+        name, objective
     )
 }
 

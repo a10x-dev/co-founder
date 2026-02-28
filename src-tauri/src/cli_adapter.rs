@@ -1,5 +1,6 @@
 use std::io::BufRead;
 use std::process::{Command, Stdio};
+use crate::process_pool::ProcessPool;
 
 #[derive(Clone, Debug)]
 pub struct CliAdapter {
@@ -39,10 +40,15 @@ impl CliAdapter {
         CliAdapter { claude_path: path }
     }
 
-    pub fn run_turn(&self, config: TurnConfig) -> Result<TurnResult, String> {
+    pub fn run_turn(
+        &self,
+        config: TurnConfig,
+        process_pool: Option<&ProcessPool>,
+    ) -> Result<TurnResult, String> {
         let mut cmd = Command::new(&self.claude_path);
         cmd.arg("-p").arg(&config.prompt);
         cmd.arg("--output-format").arg("stream-json");
+        cmd.arg("--verbose");
 
         if let Some(ref session_id) = config.resume_session_id {
             cmd.arg("--resume").arg(session_id);
@@ -66,72 +72,84 @@ impl CliAdapter {
         cmd.stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn claude: {e}"))?;
-
-        let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-        let reader = std::io::BufReader::new(stdout);
-
-        let mut events: Vec<StreamEvent> = Vec::new();
-        let mut session_id: Option<String> = None;
-        let mut text_output = String::new();
-
-        for line in reader.lines() {
-            let line = line.map_err(|e| format!("Read error: {e}"))?;
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let parsed: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let event_type = parsed
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            events.push(StreamEvent {
-                event_type: event_type.clone(),
-                raw_json: line.clone(),
-            });
-
-            if event_type == "result" {
-                if let Some(sid) = parsed.get("session_id").and_then(|v| v.as_str()) {
-                    session_id = Some(sid.to_string());
-                }
-                if let Some(result_text) = parsed.get("result").and_then(|v| v.as_str()) {
-                    text_output.push_str(result_text);
-                }
-            }
-
-            if event_type == "assistant" {
-                if let Some(content) = parsed.get("content").and_then(|v| v.as_str()) {
-                    text_output.push_str(content);
-                    text_output.push('\n');
-                }
-            }
+        let pid = child.id();
+        if let Some(pool) = process_pool {
+            pool.register(&config.agent_id, pid);
         }
 
-        let status = child.wait().map_err(|e| format!("Wait error: {e}"))?;
-        if !status.success() {
-            let stderr = child.stderr.take();
-            let err_msg = if let Some(stderr) = stderr {
-                let reader = std::io::BufReader::new(stderr);
-                reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
-            } else {
-                format!("claude exited with status {status}")
-            };
-            if events.is_empty() {
-                return Err(format!("Claude CLI failed: {err_msg}"));
+        let run_result = (|| -> Result<TurnResult, String> {
+            let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+            let reader = std::io::BufReader::new(stdout);
+
+            let mut events: Vec<StreamEvent> = Vec::new();
+            let mut session_id: Option<String> = None;
+            let mut text_output = String::new();
+
+            for line in reader.lines() {
+                let line = line.map_err(|e| format!("Read error: {e}"))?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+
+                let parsed: serde_json::Value = match serde_json::from_str(&line) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let event_type = parsed
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                events.push(StreamEvent {
+                    event_type: event_type.clone(),
+                    raw_json: line.clone(),
+                });
+
+                if event_type == "result" {
+                    if let Some(sid) = parsed.get("session_id").and_then(|v| v.as_str()) {
+                        session_id = Some(sid.to_string());
+                    }
+                    if let Some(result_text) = parsed.get("result").and_then(|v| v.as_str()) {
+                        text_output.push_str(result_text);
+                    }
+                }
+
+                if event_type == "assistant" {
+                    if let Some(content) = parsed.get("content").and_then(|v| v.as_str()) {
+                        text_output.push_str(content);
+                        text_output.push('\n');
+                    }
+                }
             }
+
+            let status = child.wait().map_err(|e| format!("Wait error: {e}"))?;
+            if !status.success() {
+                let stderr = child.stderr.take();
+                let err_msg = if let Some(stderr) = stderr {
+                    let reader = std::io::BufReader::new(stderr);
+                    reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
+                } else {
+                    format!("claude exited with status {status}")
+                };
+                if events.is_empty() {
+                    return Err(format!("Claude CLI failed: {err_msg}"));
+                }
+            }
+
+            Ok(TurnResult {
+                events,
+                session_id,
+                text_output,
+            })
+        })();
+
+        if let Some(pool) = process_pool {
+            pool.unregister(&config.agent_id);
         }
 
-        Ok(TurnResult {
-            events,
-            session_id,
-            text_output,
-        })
+        run_result
     }
 }
 

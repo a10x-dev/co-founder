@@ -173,3 +173,13 @@ pub struct CreateAgentRequest {
     pub checkin_interval_secs: u64,
     pub autonomy_level: String,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ImportAgentRequest {
+    pub workspace_path: String,
+    pub name: String,
+    pub mission: String,
+    pub personality: String,
+    pub checkin_interval_secs: u64,
+    pub autonomy_level: String,
+}

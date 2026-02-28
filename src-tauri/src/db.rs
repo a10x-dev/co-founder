@@ -173,6 +173,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_last_heartbeat(&self, id: &Uuid, timestamp: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET last_heartbeat_at = ?1 WHERE id = ?2",
+            params![timestamp, id.to_string()],
+        )
+        .map_err(|e| format!("Update heartbeat error: {e}"))?;
+        Ok(())
+    }
+
     pub fn delete_agent(&self, id: &Uuid) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute("DELETE FROM work_sessions WHERE agent_id = ?1", params![id.to_string()])
@@ -185,7 +195,7 @@ impl Database {
     pub fn get_work_sessions(&self, agent_id: &Uuid) -> Result<Vec<WorkSessionLog>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC")
+            .prepare("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 50")
             .map_err(|e| format!("Query error: {e}"))?;
 
         let sessions = stmt
