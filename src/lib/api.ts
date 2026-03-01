@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, Artifact, ToolManifestEntry } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -79,4 +79,28 @@ export async function triggerManualSession(id: string): Promise<void> {
 
 export async function sendMessageToAgent(agentId: string, message: string): Promise<void> {
   return invoke("send_message_to_agent", { agentId, message });
+}
+
+export async function updateAutonomyLevel(id: string, level: string): Promise<void> {
+  return invoke("update_autonomy_level", { id, level });
+}
+
+export async function checkWorkspaceHealth(agentId: string): Promise<WorkspaceHealth> {
+  return invoke("check_workspace_health", { agentId });
+}
+
+export async function repairWorkspace(agentId: string): Promise<string[]> {
+  return invoke("repair_workspace", { agentId });
+}
+
+export async function readArtifactsManifest(agentId: string): Promise<Artifact[]> {
+  return invoke<string>("read_artifacts_manifest", { agentId }).then((raw) => {
+    try { return JSON.parse(raw) as Artifact[]; } catch { return []; }
+  });
+}
+
+export async function readToolsManifest(agentId: string): Promise<ToolManifestEntry[]> {
+  return invoke<string>("read_tools_manifest", { agentId }).then((raw) => {
+    try { return JSON.parse(raw) as ToolManifestEntry[]; } catch { return []; }
+  });
 }

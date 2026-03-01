@@ -3,6 +3,16 @@ use std::process::{Command, Stdio};
 use tauri::{AppHandle, Emitter};
 use crate::process_pool::ProcessPool;
 
+fn redact_secrets(text: &str, secrets: &[(String, String)]) -> String {
+    let mut result = text.to_string();
+    for (_, value) in secrets {
+        if value.len() >= 4 {
+            result = result.replace(value, &format!("{}****", &value[..2]));
+        }
+    }
+    result
+}
+
 #[derive(Clone, Debug)]
 pub struct CliAdapter {
     pub claude_path: String,
@@ -17,6 +27,7 @@ pub struct TurnConfig {
     pub resume_session_id: Option<String>,
     pub allowed_tools: String,
     pub env_vars: Vec<(String, String)>,
+    pub skip_permissions: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +170,10 @@ impl CliAdapter {
             }
         }
 
+        if config.skip_permissions {
+            cmd.arg("--dangerously-skip-permissions");
+        }
+
         if let Some(ref soul) = config.soul_content {
             cmd.arg("--system-prompt").arg(soul);
         }
@@ -202,16 +217,18 @@ impl CliAdapter {
                     .unwrap_or("unknown")
                     .to_string();
 
+                let safe_line = redact_secrets(&line, &config.env_vars);
+
                 events.push(StreamEvent {
                     event_type: event_type.clone(),
-                    raw_json: line.clone(),
+                    raw_json: safe_line.clone(),
                 });
 
                 if let Some(handle) = app_handle {
                     let _ = handle.emit("agent-output", serde_json::json!({
                         "agent_id": config.agent_id,
                         "type": event_type,
-                        "raw": line,
+                        "raw": safe_line,
                     }));
                 }
 

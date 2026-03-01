@@ -1,5 +1,6 @@
 use chrono::Utc;
 use std::fs;
+use serde::Serialize;
 use tauri::Emitter;
 use uuid::Uuid;
 
@@ -7,6 +8,14 @@ use crate::cli_adapter::detect_claude_path;
 use crate::models::*;
 use crate::state_manager::StateManager;
 use crate::AppState;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WorkspaceHealthResponse {
+    pub healthy: bool,
+    pub missing_files: Vec<String>,
+    pub workspace_exists: bool,
+    pub founder_exists: bool,
+}
 
 #[tauri::command]
 pub async fn get_agents(state: tauri::State<'_, AppState>) -> Result<Vec<Agent>, String> {
@@ -42,7 +51,7 @@ pub async fn create_agent(
         allowed_tools: String::new(),
         status: AgentStatus::Idle,
         current_session_id: None,
-        max_session_duration_secs: 900,
+        max_session_duration_secs: 1800,
         created_at: Utc::now().to_rfc3339(),
         last_heartbeat_at: None,
         total_sessions: 0,
@@ -163,7 +172,7 @@ pub async fn import_agent(
         allowed_tools: String::new(),
         status: AgentStatus::Idle,
         current_session_id: None,
-        max_session_duration_secs: 900,
+        max_session_duration_secs: 1800,
         created_at: Utc::now().to_rfc3339(),
         last_heartbeat_at: None,
         total_sessions: 0,
@@ -322,4 +331,63 @@ pub async fn send_message_to_agent(
     let updated = format!("{}{}", existing, entry);
     fs::write(&inbox_path, updated).map_err(|e| format!("Failed to write INBOX.md: {e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn update_autonomy_level(
+    id: String,
+    level: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let autonomy = AutonomyLevel::from_str(&level);
+    state.db.update_autonomy_level(&uuid, &autonomy)
+}
+
+#[tauri::command]
+pub async fn check_workspace_health(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<WorkspaceHealthResponse, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let health = StateManager::check_workspace_health(&agent.workspace);
+    Ok(WorkspaceHealthResponse {
+        healthy: health.healthy,
+        missing_files: health.missing_files,
+        workspace_exists: health.workspace_exists,
+        founder_exists: health.founder_exists,
+    })
+}
+
+#[tauri::command]
+pub async fn repair_workspace(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    StateManager::repair_workspace(&agent.workspace, &agent.personality, &agent.mission)
+}
+
+#[tauri::command]
+pub async fn read_artifacts_manifest(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let manifest_path = format!("{}/.founder/artifacts/manifest.json", agent.workspace.trim_end_matches('/'));
+    fs::read_to_string(&manifest_path).map_err(|_| "No artifacts manifest found".into())
+}
+
+#[tauri::command]
+pub async fn read_tools_manifest(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let manifest_path = format!("{}/.founder/tools/manifest.json", agent.workspace.trim_end_matches('/'));
+    fs::read_to_string(&manifest_path).map_err(|_| "No tools manifest found".into())
 }

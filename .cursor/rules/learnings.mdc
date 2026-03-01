@@ -26,9 +26,25 @@ alwaysApply: true
 
 - Tilde paths (`~/...`) must be expanded before any filesystem operations. Use `expand_home()` helper in `commands.rs`.
 - `read_text_file` command should validate paths to prevent traversal attacks.
+- `cargo check` must run from `src-tauri/`, not project root.
+- Env var values are AES-256-GCM encrypted in SQLite. Key lives at `~/.agent-founder/.key` (0600 perms).
+- Secret values are redacted from CLI output via `redact_secrets()` in `cli_adapter.rs` before storage or emission.
+- Workspace health check: `StateManager::check_workspace_health()` verifies .founder/ files, `repair_workspace()` recreates missing ones.
+
+## Co-Founder Engine
+
+- Agent controls its own tempo via `NEXT_CHECKIN: Xm` or `NEXT_CHECKIN: Xh` at end of output. Parsed in `work_session.rs`, applied via `heartbeat.update_interval()` in `lib.rs`. Clamped 1m–24h.
+- Two distinct cycles: work cycle (fast heartbeat, execute tasks) and review cycle (triggered when 20+ hours since last session, full strategic assessment).
+- Session defaults: 1800s (30 min) max duration, 40 turns max. Previously 900s/20 turns.
+- Soul templates are "Co-Founder DNA" — agent owns outcomes, sets priorities, tracks what worked/failed. NOT employee personality.
+- `tempo_change` events emitted to frontend when agent changes its heartbeat interval.
 
 ## UX
 
 - Every UI decision must be carefully considered — this is a premium product.
 - Selectable option cards: use consistent border width (2px always) and toggle `borderColor` only. Changing border width causes layout shift.
 - Inline `style={{}}` hover handlers are verbose but necessary for CSS-var-based theming since Tailwind can't reference CSS vars in hover states easily.
+- HomeView is now "Command Center" with health indicators (green/yellow/red), last session badge, and batch start/pause.
+- AgentDetailView has 6 tabs: Activity, Messages, Files, Secrets, Artifacts, Tools.
+- Session progress: turn counter + elapsed timer shown in Live pane header via `turn_progress` events.
+- Tempo change events displayed in live output pane.

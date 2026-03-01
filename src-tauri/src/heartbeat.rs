@@ -6,12 +6,14 @@ use tokio::task::JoinHandle;
 
 pub struct HeartbeatScheduler {
     handles: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
+    intervals: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl HeartbeatScheduler {
     pub fn new() -> Self {
         HeartbeatScheduler {
             handles: Arc::new(Mutex::new(HashMap::new())),
+            intervals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -22,6 +24,11 @@ impl HeartbeatScheduler {
         app_handle: AppHandle,
     ) {
         self.stop_agent_heartbeat(&agent_id);
+
+        {
+            let mut intervals = self.intervals.lock().unwrap();
+            intervals.insert(agent_id.clone(), interval_secs);
+        }
 
         let id = agent_id.clone();
         let handle = tokio::spawn(async move {
@@ -41,11 +48,37 @@ impl HeartbeatScheduler {
         handles.insert(agent_id, handle);
     }
 
+    /// Restart heartbeat with a new interval (agent-requested tempo change)
+    pub fn update_interval(
+        &self,
+        agent_id: &str,
+        new_interval_secs: u64,
+        app_handle: AppHandle,
+    ) {
+        let current = {
+            let intervals = self.intervals.lock().unwrap();
+            intervals.get(agent_id).copied()
+        };
+
+        if current == Some(new_interval_secs) {
+            return;
+        }
+
+        self.start_agent_heartbeat(agent_id.to_string(), new_interval_secs, app_handle);
+    }
+
+    pub fn get_interval(&self, agent_id: &str) -> Option<u64> {
+        let intervals = self.intervals.lock().unwrap();
+        intervals.get(agent_id).copied()
+    }
+
     pub fn stop_agent_heartbeat(&self, agent_id: &str) {
         let mut handles = self.handles.lock().unwrap();
         if let Some(handle) = handles.remove(agent_id) {
             handle.abort();
         }
+        let mut intervals = self.intervals.lock().unwrap();
+        intervals.remove(agent_id);
     }
 
     pub fn stop_all(&self) {
@@ -53,5 +86,7 @@ impl HeartbeatScheduler {
         for (_, handle) in handles.drain() {
             handle.abort();
         }
+        let mut intervals = self.intervals.lock().unwrap();
+        intervals.clear();
     }
 }

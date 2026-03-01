@@ -75,3 +75,29 @@ export interface AgentEnvVar {
   value: string;
   created_at: string;
 }
+
+export interface WorkspaceHealth {
+  healthy: boolean;
+  missing_files: string[];
+  workspace_exists: boolean;
+  founder_exists: boolean;
+}
+
+export interface Artifact {
+  id: string;
+  title: string;
+  type: "metric" | "table" | "checklist" | "markdown" | "chart" | "log";
+  description?: string;
+  data: unknown;
+  updated_at: string;
+}
+
+export interface ToolManifestEntry {
+  name: string;
+  description: string;
+  language: string;
+  path: string;
+  use_count: number;
+  created_at: string;
+  approved: boolean;
+}

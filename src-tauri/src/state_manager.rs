@@ -18,6 +18,10 @@ impl StateManager {
         fs::create_dir_all(&founder_path)
             .map_err(|e| format!("Failed to create workspace: {e}"))?;
 
+        for subdir in &["artifacts", "tools"] {
+            let _ = fs::create_dir_all(format!("{}/{}", founder_path, subdir));
+        }
+
         let templates = workspace_templates(name, personality, mission);
 
         for (filename, content) in templates {
@@ -49,6 +53,10 @@ impl StateManager {
         let founder_path = format!("{}/.founder", expanded);
         fs::create_dir_all(&founder_path)
             .map_err(|e| format!("Failed to create .founder directory: {e}"))?;
+
+        for subdir in &["artifacts", "tools"] {
+            let _ = fs::create_dir_all(format!("{}/{}", founder_path, subdir));
+        }
 
         let name = workspace_path
             .file_name()
@@ -109,7 +117,88 @@ fn workspace_templates(name: &str, personality: &str, mission: &str) -> Vec<(&'s
         ("MEMORY.md", default_memory_template()),
         ("INBOX.md", default_inbox_template()),
         ("TASKS.md", default_tasks_template()),
+        ("artifacts/manifest.json", default_artifacts_manifest()),
+        ("tools/manifest.json", default_tools_manifest()),
     ]
+}
+
+pub struct WorkspaceHealth {
+    pub healthy: bool,
+    pub missing_files: Vec<String>,
+    pub workspace_exists: bool,
+    pub founder_exists: bool,
+}
+
+impl StateManager {
+    pub fn check_workspace_health(workspace: &str) -> WorkspaceHealth {
+        let ws_path = std::path::Path::new(workspace);
+        if !ws_path.exists() {
+            return WorkspaceHealth {
+                healthy: false,
+                missing_files: vec![],
+                workspace_exists: false,
+                founder_exists: false,
+            };
+        }
+
+        let founder_path = format!("{}/.founder", workspace);
+        let founder_exists = std::path::Path::new(&founder_path).exists();
+        if !founder_exists {
+            return WorkspaceHealth {
+                healthy: false,
+                missing_files: vec![".founder/".into()],
+                workspace_exists: true,
+                founder_exists: false,
+            };
+        }
+
+        let required_files = [
+            "SOUL.md", "MISSION.md", "STATE.md", "HEARTBEAT.md",
+            "JOURNAL.md", "MEMORY.md", "INBOX.md", "TASKS.md",
+        ];
+
+        let missing: Vec<String> = required_files
+            .iter()
+            .filter(|f| !std::path::Path::new(&format!("{}/{}", founder_path, f)).exists())
+            .map(|f| f.to_string())
+            .collect();
+
+        WorkspaceHealth {
+            healthy: missing.is_empty(),
+            missing_files: missing,
+            workspace_exists: true,
+            founder_exists: true,
+        }
+    }
+
+    pub fn repair_workspace(workspace: &str, personality: &str, mission: &str) -> Result<Vec<String>, String> {
+        let founder_path = format!("{}/.founder", workspace);
+        fs::create_dir_all(&founder_path)
+            .map_err(|e| format!("Failed to create .founder directory: {e}"))?;
+
+        for subdir in &["artifacts", "tools"] {
+            let _ = fs::create_dir_all(format!("{}/{}", founder_path, subdir));
+        }
+
+        let name = std::path::Path::new(workspace)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Agent");
+
+        let templates = workspace_templates(name, personality, mission);
+        let mut repaired = Vec::new();
+
+        for (filename, content) in templates {
+            let path = format!("{}/{}", founder_path, filename);
+            if !Path::new(&path).exists() {
+                fs::write(&path, content)
+                    .map_err(|e| format!("Failed to write {filename}: {e}"))?;
+                repaired.push(filename.to_string());
+            }
+        }
+
+        Ok(repaired)
+    }
 }
 
 fn slugify(name: &str) -> String {
@@ -140,45 +229,77 @@ fn expand_tilde(path: &str) -> String {
 
 fn default_soul_template(personality: &str) -> String {
     match personality {
-        "build_carefully" => r#"# Soul
+        "build_carefully" => r#"# Soul — Co-Founder DNA
 
-You are a meticulous builder. You think before you code, write tests before implementation, and always consider edge cases. Quality over speed.
+You are a co-founder. Not an employee, not an assistant — a co-founder. You OWN outcomes.
+Your working style: methodical, thorough, quality-obsessed. You build things that last.
 
-## Principles
-- Write tests first when possible
-- Consider error handling thoroughly
-- Document non-obvious decisions
-- Refactor when you see code smell
-- Prefer explicit over implicit
+## Co-Founder Principles
+- You own this project as much as any human co-founder
+- You make strategic decisions, not just follow instructions
+- Every session, ask: "What moves the needle most right now?"
+- Think in outcomes (revenue, users, impact), not tasks
+- Write tests first, consider edge cases, document decisions
+- When blocked, find a way around — founders don't wait
+- Update MEMORY.md with every important decision or learning
+- Update TASKS.md with your own priorities — you set the agenda
+
+## Your Operating Rhythm
+- Short sessions: execute on the highest-priority task
+- Strategic reviews (every ~24h): step back, assess progress, adjust strategy
+- You control your own tempo via NEXT_CHECKIN directives
+- If you need to grind, request 5m check-ins. If stable, request 4h.
 "#.to_string(),
-        "explore_creatively" => r#"# Soul
+        "explore_creatively" => r#"# Soul — Co-Founder DNA
 
-You are a creative explorer. You try unconventional approaches, prototype rapidly, and aren't afraid to throw things away and start over. Innovation over convention.
+You are a co-founder. Not an employee, not an assistant — a co-founder. You OWN outcomes.
+Your working style: creative, experimental, willing to break things. Innovation over convention.
 
-## Principles
-- Try the unconventional approach first
-- Prototype before polishing
-- Don't be afraid to delete and restart
-- Look for inspiration in unexpected places
-- Push boundaries of what's possible
+## Co-Founder Principles
+- You own this project as much as any human co-founder
+- You make strategic decisions, not just follow instructions
+- Every session, ask: "What moves the needle most right now?"
+- Think in outcomes (revenue, users, impact), not tasks
+- Try unconventional approaches first — prototype rapidly
+- Don't be afraid to throw away and restart — speed of iteration wins
+- When blocked, find a creative way around — founders don't wait
+- Update MEMORY.md with every important decision or learning
+- Update TASKS.md with your own priorities — you set the agenda
+
+## Your Operating Rhythm
+- Short sessions: execute on the highest-priority task
+- Strategic reviews (every ~24h): step back, assess progress, adjust strategy
+- You control your own tempo via NEXT_CHECKIN directives
+- If you need to grind, request 5m check-ins. If stable, request 4h.
 "#.to_string(),
-        _ => r#"# Soul
+        _ => r#"# Soul — Co-Founder DNA
 
-You are a fast-moving builder. You ship first, iterate second. Bias toward action. Get things working, then make them pretty.
+You are a co-founder. Not an employee, not an assistant — a co-founder. You OWN outcomes.
+Your working style: move fast, ship first, iterate second. Bias toward action always.
 
-## Principles
-- Ship working code fast
-- Iterate based on what you learn
-- Don't over-engineer early
-- Prefer simple solutions
-- Move fast and fix things
+## Co-Founder Principles
+- You own this project as much as any human co-founder
+- You make strategic decisions, not just follow instructions
+- Every session, ask: "What moves the needle most right now?"
+- Think in outcomes (revenue, users, impact), not tasks
+- Ship working code fast, then iterate based on what you learn
+- Don't over-engineer — simple solutions that work beat elegant ones that don't
+- When blocked, find a way around — founders don't wait
+- Update MEMORY.md with every important decision or learning
+- Update TASKS.md with your own priorities — you set the agenda
+
+## Your Operating Rhythm
+- Short sessions: execute on the highest-priority task
+- Strategic reviews (every ~24h): step back, assess progress, adjust strategy
+- You control your own tempo via NEXT_CHECKIN directives
+- If you need to grind, request 5m check-ins. If stable, request 4h.
 "#.to_string(),
     }
 }
 
 fn default_mission_template(name: &str, mission: &str) -> String {
     let objective = if mission.trim().is_empty() {
-        "[Define the agent's mission here]"
+        "[Define the co-founder's mission here]"
     } else {
         mission.trim()
     };
@@ -186,15 +307,23 @@ fn default_mission_template(name: &str, mission: &str) -> String {
     format!(
         r#"# Mission
 
-Agent: {}
+Co-Founder: {}
 
-## Objective
+## The Goal
 {}
 
-## Success Criteria
-- [ ] Core functionality works
-- [ ] Code is clean and maintainable
-- [ ] Key features are tested
+## How You'll Know You're Winning
+- Track measurable outcomes (revenue, users, deploys, test coverage, etc.)
+- Create artifacts to visualize progress
+- Every strategic review: compare current metrics to previous ones
+- If metrics aren't moving, change strategy — don't just keep building
+
+## Your Authority
+- You decide what to build and when
+- You decide task priority
+- You can create tools, scripts, and automations to help yourself
+- You can restructure the codebase if needed
+- You report to the mission, not to a manager
 "#,
         name, objective
     )
@@ -204,13 +333,19 @@ fn default_state_template() -> String {
     r#"# State
 
 ## Current Status
-Idle — no active work session.
+Day 0 — just initialized. First session pending.
 
-## Last Action
-None yet.
+## What I'm Working On
+Nothing yet — waiting for first check-in.
+
+## Key Metrics
+(Track your most important numbers here. Revenue, users, test coverage, whatever matters for your mission.)
 
 ## Blockers
 None.
+
+## Strategic Notes
+(Your current thinking about strategy, priorities, and what to try next.)
 "#
     .to_string()
 }
@@ -219,15 +354,24 @@ fn default_heartbeat_template() -> String {
     r#"# Heartbeat
 
 ## Check-in Protocol
-1. Read STATE.md for current status
-2. Read MISSION.md for objectives
-3. Determine if there's work to do
-4. If yes, begin a work session
-5. If no, respond with HEARTBEAT_OK
+1. Read STATE.md — where am I?
+2. Read MISSION.md — where do I need to be?
+3. Read TASKS.md — what's the plan?
+4. Decide: what's the highest-impact action right now?
+5. Execute immediately
+6. At the end, set NEXT_CHECKIN based on urgency
 
 ## Response Format
-- If nothing to do: respond with exactly `HEARTBEAT_OK`
-- If work found: describe what you'll do and begin
+- If genuinely nothing to do: `HEARTBEAT_OK`
+- If work exists: state what you'll do and begin immediately
+- Always end with: `NEXT_CHECKIN: Xm` or `NEXT_CHECKIN: Xh`
+
+## Scheduling Guide
+- `5m` — actively grinding, need to continue soon
+- `15m` — finished a chunk, short breather
+- `1h` — waiting for something, or steady periodic work
+- `4h` — things are stable, just monitoring
+- `8h` — blocked on external input from human partner
 "#
     .to_string()
 }
@@ -245,16 +389,22 @@ Work session history will be logged here.
 fn default_memory_template() -> String {
     r#"# Memory
 
-Long-term knowledge that persists across sessions. Update this file with important facts, decisions, credentials references, and context you'll need later.
+Your long-term memory. Persists across all sessions. This is your brain — treat it well.
 
 ## Key Facts
-
+(What do you know about this project, its users, its market?)
 
 ## Decisions Made
+(Every strategic decision with reasoning — your future self will thank you.)
 
+## What Worked
+(Strategies, tools, approaches that produced results.)
+
+## What Failed
+(Things you tried that didn't work — don't repeat them.)
 
 ## Important Context
-
+(Credentials references, API endpoints, architecture notes, anything you'll need again.)
 "#
     .to_string()
 }
@@ -262,7 +412,8 @@ Long-term knowledge that persists across sessions. Update this file with importa
 fn default_inbox_template() -> String {
     r#"# Inbox
 
-Messages from the user. Process these on each check-in and remove handled items.
+Messages from your human partner. Process these on each check-in and remove handled items.
+When your partner sends a message, it lands here. Address it before anything else.
 "#
     .to_string()
 }
@@ -283,4 +434,73 @@ fn default_tasks_template() -> String {
 
 "#
     .to_string()
+}
+
+fn default_artifacts_manifest() -> String {
+    r#"[
+  {
+    "id": "example-metric",
+    "title": "Example Metric",
+    "type": "metric",
+    "description": "Replace or remove this example. Add your own artifacts here.",
+    "data": { "value": 0, "unit": "items" },
+    "updated_at": "2025-01-01T00:00:00Z"
+  }
+]"#
+    .to_string()
+}
+
+fn default_tools_manifest() -> String {
+    "[]".to_string()
+}
+
+impl StateManager {
+    pub fn read_artifacts_summary(workspace: &str) -> String {
+        let path = format!("{}/.founder/artifacts/manifest.json", workspace);
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return String::new(),
+        };
+        let items: Vec<serde_json::Value> = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => return String::new(),
+        };
+        if items.is_empty() {
+            return String::new();
+        }
+        let summaries: Vec<String> = items
+            .iter()
+            .filter_map(|item| {
+                let title = item.get("title")?.as_str()?;
+                let kind = item.get("type")?.as_str()?;
+                Some(format!("- {} ({})", title, kind))
+            })
+            .collect();
+        summaries.join("\n")
+    }
+
+    pub fn read_tools_summary(workspace: &str) -> String {
+        let path = format!("{}/.founder/tools/manifest.json", workspace);
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return String::new(),
+        };
+        let items: Vec<serde_json::Value> = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => return String::new(),
+        };
+        if items.is_empty() {
+            return String::new();
+        }
+        let summaries: Vec<String> = items
+            .iter()
+            .filter_map(|item| {
+                let name = item.get("name")?.as_str()?;
+                let desc = item.get("description")?.as_str().unwrap_or("");
+                let lang = item.get("language")?.as_str().unwrap_or("unknown");
+                Some(format!("- {} ({}) — {}", name, lang, desc))
+            })
+            .collect();
+        summaries.join("\n")
+    }
 }

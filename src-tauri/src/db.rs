@@ -2,6 +2,7 @@ use rusqlite::{params, Connection};
 use std::sync::Mutex;
 use uuid::Uuid;
 
+use crate::crypto;
 use crate::models::*;
 
 pub struct Database {
@@ -38,7 +39,7 @@ impl Database {
                 allowed_tools TEXT NOT NULL DEFAULT '',
                 status TEXT NOT NULL DEFAULT 'idle',
                 current_session_id TEXT,
-                max_session_duration_secs INTEGER NOT NULL DEFAULT 900,
+                max_session_duration_secs INTEGER NOT NULL DEFAULT 1800,
                 created_at TEXT NOT NULL,
                 last_heartbeat_at TEXT,
                 total_sessions INTEGER NOT NULL DEFAULT 0,
@@ -212,6 +213,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_autonomy_level(&self, id: &Uuid, level: &AutonomyLevel) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET autonomy_level = ?1 WHERE id = ?2",
+            params![level.to_string(), id.to_string()],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
     pub fn update_last_heartbeat(&self, id: &Uuid, timestamp: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(
@@ -324,11 +335,13 @@ impl Database {
 
         let vars = stmt
             .query_map(params![agent_id.to_string()], |row| {
+                let raw_value: String = row.get(3)?;
+                let decrypted = crypto::decrypt(&raw_value).unwrap_or(raw_value);
                 Ok(AgentEnvVar {
                     id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
                     agent_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
                     key: row.get(2)?,
-                    value: row.get(3)?,
+                    value: decrypted,
                     created_at: row.get(4)?,
                 })
             })
@@ -343,9 +356,10 @@ impl Database {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let id = Uuid::new_v4();
         let now = chrono::Utc::now().to_rfc3339();
+        let encrypted = crypto::encrypt(value)?;
         conn.execute(
             "INSERT INTO agent_env_vars (id, agent_id, key, value, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(agent_id, key) DO UPDATE SET value = ?4",
-            params![id.to_string(), agent_id.to_string(), key, value, now],
+            params![id.to_string(), agent_id.to_string(), key, encrypted, now],
         )
         .map_err(|e| format!("Insert env var error: {e}"))?;
         Ok(())

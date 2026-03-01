@@ -1,28 +1,23 @@
----
-description: Project context and architecture for Agent Founder
-alwaysApply: true
----
-
 # Agent Founder
 
-Desktop app for managing autonomous AI coding agents powered by Claude Code.
+Desktop app that turns Claude Code into a fully autonomous AI co-founder. Not an assistant — a co-founder that owns outcomes, makes strategic decisions, and controls its own work tempo.
 
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript + Tailwind CSS v4 + Vite 6
 - **Backend**: Rust + Tauri 2
-- **Database**: SQLite (via rusqlite)
+- **Database**: SQLite (via rusqlite) with AES-256-GCM encrypted env vars
 - **Font**: Geist (loaded via CDN)
 - **Icons**: lucide-react
 
 ## Architecture
 
 - `src/` — React frontend (views, components, hooks, lib, types)
-- `src-tauri/src/` — Rust backend (commands, models, db, state, process pool)
+- `src-tauri/src/` — Rust backend (commands, models, db, crypto, state, process pool, cli adapter, work session, heartbeat)
 - `src/lib/api.ts` — frontend wrapper for Tauri `invoke()` calls
-- `src/lib/wizardConstants.ts` — shared constants for create/import wizard flows
+- `src/lib/wizardConstants.ts` — shared constants for create/import wizard flows (co-founder framing)
 - `src/types/index.ts` — all TypeScript interfaces
-- `.founder/` — per-agent workspace directory (SOUL.md, MISSION.md, STATE.md, etc.)
+- `.founder/` — per-agent workspace directory (SOUL.md, MISSION.md, STATE.md, MEMORY.md, INBOX.md, TASKS.md, artifacts/, tools/)
 
 ## Key Patterns
 
@@ -32,3 +27,27 @@ Desktop app for managing autonomous AI coding agents powered by Claude Code.
 - Tauri commands defined in `src-tauri/src/commands.rs`, registered in `lib.rs`
 - CSS variables defined in `src/index.css` `:root` for theming (warm neutral palette)
 - Tailwind v4 imported via `@import "tailwindcss"` — no tailwind.config needed
+
+## Co-Founder Engine (core loop)
+
+- **Two cycles**: Work cycle (5m–4h, execute tasks) + Review cycle (~24h, strategic assessment)
+- **Agent-controlled scheduling**: Agent outputs `NEXT_CHECKIN: Xm/Xh` to set its own tempo. Parsed in `work_session.rs`, applied in `lib.rs` via `heartbeat.update_interval()`. Clamped 1m–24h.
+- **Strategic review**: Triggered automatically when 20+ hours since last session. Different prompt: full mission review, metric assessment, strategy adjustment.
+- **Session defaults**: 30 min max duration, 40 turns max. Agent gets serious work time.
+- **Soul templates**: Co-founder DNA, not employee personality. Agent owns outcomes, sets own priorities, tracks what worked/failed.
+
+## Security & Reliability
+
+- Secrets encrypted with AES-256-GCM (key at `~/.agent-founder/.key`), decrypted on read
+- Secret values redacted from CLI output events before storage/emission
+- Live streaming via Tauri `emit("agent-output")` events from CLI adapter
+- Session progress tracked with `turn_progress` events, tempo changes via `tempo_change` events
+- Workspace health checks verify .founder/ files exist, with auto-repair
+- Agent auto-recovery: consecutive_errors tracked, exponential backoff on Error/RateLimited
+- Autonomy level controls `--dangerously-skip-permissions` flag on Claude CLI
+
+## Extensibility
+
+- Artifacts: JSON manifest at `.founder/artifacts/manifest.json` with metric/table/checklist/markdown types
+- Agent Toolbox: JSON manifest at `.founder/tools/manifest.json` with script metadata
+- Agent prompted to create artifacts for metrics tracking and tools for automation

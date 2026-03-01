@@ -13,6 +13,7 @@ pub struct WorkSessionEngine;
 pub struct SessionResult {
     pub log: WorkSessionLog,
     pub is_rate_limited: bool,
+    pub requested_next_checkin_secs: Option<u64>,
 }
 
 impl WorkSessionEngine {
@@ -31,18 +32,68 @@ impl WorkSessionEngine {
         let memory_content = StateManager::read_memory(&agent.workspace);
         let inbox_content = StateManager::read_inbox(&agent.workspace);
         let tasks_content = StateManager::read_tasks(&agent.workspace);
+        let artifacts_summary = StateManager::read_artifacts_summary(&agent.workspace);
+        let tools_summary = StateManager::read_tools_summary(&agent.workspace);
         let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
+        let skip_perms = agent.autonomy_level == crate::models::AutonomyLevel::Yolo;
 
-        let mut prompt_parts = vec![
-            "You are checking in on your project.".to_string(),
-            format!("\n## Your Mission\n{}", agent.mission),
-            format!("\n## Current State\n{}", state_content),
-        ];
+        let now = Utc::now();
+        let created = chrono::DateTime::parse_from_rfc3339(&agent.created_at)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(now);
+        let age_hours = now.signed_duration_since(created).num_hours();
+        let age_days = age_hours / 24;
+
+        let hours_since_last_session = agent
+            .last_heartbeat_at
+            .as_ref()
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+            .map(|last| now.signed_duration_since(last.with_timezone(&chrono::Utc)).num_hours())
+            .unwrap_or(0);
+
+        let is_review_time = hours_since_last_session >= 20 || agent.total_sessions == 0;
+
+        let mut prompt_parts = vec![];
+
+        if is_review_time {
+            prompt_parts.push(format!(
+                "You are the co-founder of this project. It's time for your STRATEGIC REVIEW.\n\
+                 You've been running for {} days ({} hours). You've completed {} work sessions.\n\
+                 It's been {} hours since your last session.\n\n\
+                 ## Strategic Review Protocol\n\
+                 1. Review your MISSION — are you on track?\n\
+                 2. Review your MEMORY — what have you learned?\n\
+                 3. Analyze results — what worked, what didn't?\n\
+                 4. Decide priorities for the next cycle\n\
+                 5. Update your TASKS.md with revised priorities\n\
+                 6. Update artifacts with current metrics\n\
+                 7. Begin executing on your top priority\n\n\
+                 Think like a CEO doing a daily standup with yourself.",
+                age_days, age_hours, agent.total_sessions, hours_since_last_session
+            ));
+        } else {
+            prompt_parts.push(format!(
+                "You are the co-founder of this project. You own this. What needs to happen next?\n\
+                 Running for {} days. {} sessions completed. Last active {} hours ago.",
+                age_days, agent.total_sessions, hours_since_last_session
+            ));
+        }
+
+        prompt_parts.push(format!("\n## Your Mission\n{}", agent.mission));
+        prompt_parts.push(format!("\n## Current State\n{}", state_content));
 
         if !tasks_content.trim().is_empty()
             && tasks_content.trim() != default_empty_tasks()
         {
             prompt_parts.push(format!("\n## Tasks\n{}", tasks_content));
+        }
+
+        if !artifacts_summary.is_empty() {
+            prompt_parts.push(format!("\n## Your Artifacts\n{}", artifacts_summary));
+        }
+
+        if !tools_summary.is_empty() {
+            prompt_parts.push(format!("\n## Your Tools\n{}", tools_summary));
         }
 
         if !memory_content.trim().is_empty() {
@@ -59,18 +110,18 @@ impl WorkSessionEngine {
             && inbox_content.contains("---");
         if has_inbox {
             prompt_parts.push(format!(
-                "\n## Pending Messages from User (INBOX)\n{}\n\nIMPORTANT: Address these messages. After handling, remove them from .founder/INBOX.md.",
+                "\n## Pending Messages from Your Human Partner (INBOX)\n{}\n\nIMPORTANT: Address these messages first. After handling, remove them from .founder/INBOX.md.",
                 inbox_content
             ));
         }
 
         if has_inbox {
             prompt_parts.push(
-                "\nYou have pending messages — you MUST address them. Do NOT respond with HEARTBEAT_OK when there are messages.".to_string()
+                "\nYou have pending messages from your human partner — address them FIRST. Do NOT respond with HEARTBEAT_OK when there are messages.".to_string()
             );
         } else {
             prompt_parts.push(
-                "\nIf there is nothing to do right now, respond with exactly: HEARTBEAT_OK\nIf there is work to do, describe what you'll do and begin working.".to_string()
+                "\nIf there is genuinely nothing to do right now, respond with exactly: HEARTBEAT_OK\nIf there is ANY work you can do to advance the mission, describe your plan and begin.".to_string()
             );
         }
 
@@ -78,7 +129,35 @@ impl WorkSessionEngine {
             "\nAfter completing work, update .founder/STATE.md with your current status and .founder/MEMORY.md with any new important facts or decisions.".to_string()
         );
 
+        prompt_parts.push(r#"
+## Scheduling — You Control Your Own Tempo
+
+At the END of your response, you MUST include a scheduling directive:
+- `NEXT_CHECKIN: 5m` — if you're actively working and need to continue soon
+- `NEXT_CHECKIN: 15m` — if you just finished a chunk and want a short break
+- `NEXT_CHECKIN: 1h` — if you're waiting for something or need time to pass
+- `NEXT_CHECKIN: 4h` — if things are stable, just periodic monitoring
+- `NEXT_CHECKIN: 8h` — if you're blocked on external input
+
+Choose based on urgency. A founder grinding on launch day uses 5m. A founder waiting for user feedback uses 4h. You decide."#.to_string());
+
+        prompt_parts.push(r#"
+## Artifacts & Tools (use these to track your progress)
+
+Create artifacts to track key metrics. Write to `.founder/artifacts/manifest.json` — a JSON array where each item has:
+- `id` (string, unique), `title` (string), `type` ("metric"|"table"|"checklist"|"markdown"|"chart"|"log")
+- `description` (string, optional), `data` (any — for metric: `{"value":N,"unit":"..."}`, for checklist: `[{"label":"...","done":bool}]`, for markdown: a string)
+- `updated_at` (ISO 8601 timestamp)
+
+Create reusable tools/scripts in `.founder/tools/`. Save the script, then register in `.founder/tools/manifest.json` — a JSON array where each item has:
+- `name`, `description`, `language` (e.g. "python","bash","node"), `path` (relative to .founder/tools/)
+- `use_count` (number, increment when used), `created_at` (ISO 8601), `approved` (bool, set to true)
+
+Track everything relevant to your mission: revenue, users, deployments, test coverage, whatever matters."#.to_string());
+
         let heartbeat_prompt = prompt_parts.join("\n");
+
+        let max_turns = 40u32;
 
         let config = TurnConfig {
             agent_id: agent.id.to_string(),
@@ -88,12 +167,15 @@ impl WorkSessionEngine {
             resume_session_id: None,
             allowed_tools: agent.allowed_tools.clone(),
             env_vars: env_vars.clone(),
+            skip_permissions: skip_perms,
         };
 
         let _ = app_handle.emit("agent-output", serde_json::json!({
             "agent_id": agent.id.to_string(),
             "type": "session_start",
-            "message": "Starting work session...",
+            "message": if is_review_time { "Starting strategic review..." } else { "Co-founder checking in..." },
+            "max_turns": max_turns,
+            "max_duration_secs": agent.max_session_duration_secs,
         }));
 
         let result = match cli.run_turn_with_retry(config, Some(pool), Some(&app_handle), 2) {
@@ -116,7 +198,7 @@ impl WorkSessionEngine {
                     events_json: "[]".to_string(),
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, is_rate_limited });
+                return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
             }
         };
 
@@ -124,8 +206,10 @@ impl WorkSessionEngine {
         let mut all_events = result.events;
         let mut turns: u32 = 1;
         let mut final_session_id = result.session_id;
+        let mut all_text = text_output.clone();
 
         if text_output.contains("HEARTBEAT_OK") {
+            let requested = parse_next_checkin(&text_output);
             let log = WorkSessionLog {
                 id: session_uuid,
                 agent_id: agent.id,
@@ -139,14 +223,23 @@ impl WorkSessionEngine {
                 events_json: serialize_events(&all_events),
             };
             db.log_work_session(&log)?;
-            return Ok(SessionResult { log, is_rate_limited: false });
+            return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
         }
 
-        let max_turns = 20u32;
         let session_start = std::time::Instant::now();
 
         while turns < max_turns {
+            let _ = app_handle.emit("agent-output", serde_json::json!({
+                "agent_id": agent.id.to_string(),
+                "type": "turn_progress",
+                "turn": turns,
+                "max_turns": max_turns,
+                "elapsed_secs": session_start.elapsed().as_secs(),
+                "max_duration_secs": agent.max_session_duration_secs,
+            }));
+
             if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
+                let requested = parse_next_checkin(&all_text);
                 let log = WorkSessionLog {
                     id: session_uuid,
                     agent_id: agent.id,
@@ -160,7 +253,7 @@ impl WorkSessionEngine {
                     events_json: serialize_events(&all_events),
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, is_rate_limited: false });
+                return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
             }
 
             let sid = match &final_session_id {
@@ -171,11 +264,12 @@ impl WorkSessionEngine {
             let resume_config = TurnConfig {
                 agent_id: agent.id.to_string(),
                 workspace: agent.workspace.clone(),
-                prompt: "Continue working on the task. If you're done or blocked, say so clearly.".to_string(),
+                prompt: "Continue working. If done, say so and include your NEXT_CHECKIN directive.".to_string(),
                 soul_content: None,
                 resume_session_id: Some(sid),
                 allowed_tools: agent.allowed_tools.clone(),
                 env_vars: env_vars.clone(),
+                skip_permissions: skip_perms,
             };
 
             match cli.run_turn_with_retry(resume_config, Some(pool), Some(&app_handle), 2) {
@@ -185,12 +279,14 @@ impl WorkSessionEngine {
                         final_session_id = Some(sid.clone());
                     }
                     all_events.extend(turn_result.events);
+                    all_text.push_str(&turn_result.text_output);
 
                     let output_lower = turn_result.text_output.to_lowercase();
                     if output_lower.contains("done") || output_lower.contains("complete") || output_lower.contains("finished") {
                         break;
                     }
                     if output_lower.contains("blocked") || output_lower.contains("stuck") || output_lower.contains("cannot proceed") {
+                        let requested = parse_next_checkin(&all_text);
                         let log = WorkSessionLog {
                             id: session_uuid,
                             agent_id: agent.id,
@@ -204,7 +300,7 @@ impl WorkSessionEngine {
                             events_json: serialize_events(&all_events),
                         };
                         db.log_work_session(&log)?;
-                        return Ok(SessionResult { log, is_rate_limited: false });
+                        return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
                     }
                 }
                 Err(turn_err) => {
@@ -225,11 +321,12 @@ impl WorkSessionEngine {
                         events_json: serialize_events(&all_events),
                     };
                     db.log_work_session(&log)?;
-                    return Ok(SessionResult { log, is_rate_limited });
+                    return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
                 }
             }
         }
 
+        let requested = parse_next_checkin(&all_text);
         let log = WorkSessionLog {
             id: session_uuid,
             agent_id: agent.id,
@@ -243,8 +340,29 @@ impl WorkSessionEngine {
             events_json: serialize_events(&all_events),
         };
         db.log_work_session(&log)?;
-        Ok(SessionResult { log, is_rate_limited: false })
+        Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested })
     }
+}
+
+/// Parse `NEXT_CHECKIN: Xm` or `NEXT_CHECKIN: Xh` from agent output
+fn parse_next_checkin(text: &str) -> Option<u64> {
+    for line in text.lines().rev() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("NEXT_CHECKIN:") {
+            let val = rest.trim().to_lowercase();
+            if let Some(mins) = val.strip_suffix('m') {
+                if let Ok(n) = mins.trim().parse::<u64>() {
+                    return Some(n.max(1) * 60);
+                }
+            }
+            if let Some(hours) = val.strip_suffix('h') {
+                if let Ok(n) = hours.trim().parse::<u64>() {
+                    return Some(n.max(1) * 3600);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn serialize_events(events: &[crate::cli_adapter::StreamEvent]) -> String {

@@ -1,5 +1,6 @@
 mod models;
 mod db;
+mod crypto;
 mod cli_adapter;
 mod state_manager;
 mod process_pool;
@@ -202,6 +203,11 @@ pub fn run() {
             commands::write_text_file,
             commands::trigger_manual_session,
             commands::send_message_to_agent,
+            commands::update_autonomy_level,
+            commands::check_workspace_health,
+            commands::repair_workspace,
+            commands::read_artifacts_manifest,
+            commands::read_tools_manifest,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -329,6 +335,8 @@ async fn run_heartbeat_tick(
     match session_result {
         Ok(Ok(session_result)) => {
             let log = session_result.log;
+            let requested_interval = session_result.requested_next_checkin_secs;
+
             match log.outcome {
                 models::SessionOutcome::Blocked => {
                     permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Paused);
@@ -339,11 +347,23 @@ async fn run_heartbeat_tick(
                         permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
                     } else {
                         let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Error);
-                        // Heartbeat stays running — agent will auto-recover with backoff
                     }
                 }
                 models::SessionOutcome::Completed | models::SessionOutcome::Timeout => {
                     let _ = db.reset_consecutive_errors(&agent_uuid);
+
+                    if let Some(interval_secs) = requested_interval {
+                        let clamped = interval_secs.max(60).min(86400);
+                        heartbeat.update_interval(&agent_id, clamped, app_handle.clone());
+                        let _ = app_handle.emit("agent-output", serde_json::json!({
+                            "agent_id": agent_id,
+                            "type": "tempo_change",
+                            "interval_secs": clamped,
+                            "message": format!("Co-founder set next check-in to {}",
+                                if clamped >= 3600 { format!("{}h", clamped / 3600) }
+                                else { format!("{}m", clamped / 60) }),
+                        }));
+                    }
                 }
             }
             let _ = app_handle.emit("session-completed", &log);
