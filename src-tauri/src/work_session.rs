@@ -1,13 +1,19 @@
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::cli_adapter::{CliAdapter, TurnConfig};
+use crate::cli_adapter::{CliAdapter, TurnConfig, TurnError};
 use crate::db::Database;
 use crate::models::*;
 use crate::process_pool::ProcessPool;
 use crate::state_manager::StateManager;
+use tauri::{AppHandle, Emitter};
 
 pub struct WorkSessionEngine;
+
+pub struct SessionResult {
+    pub log: WorkSessionLog,
+    pub is_rate_limited: bool,
+}
 
 impl WorkSessionEngine {
     pub fn run_session(
@@ -15,22 +21,64 @@ impl WorkSessionEngine {
         agent: &Agent,
         pool: &ProcessPool,
         db: &Database,
-        _app_handle: tauri::AppHandle,
-    ) -> Result<WorkSessionLog, String> {
+        app_handle: AppHandle,
+    ) -> Result<SessionResult, String> {
         let session_uuid = Uuid::new_v4();
         let started_at = Utc::now().to_rfc3339();
 
         let soul_content = StateManager::get_soul_content(&agent.workspace, &agent.personality);
         let state_content = StateManager::read_state(&agent.workspace);
+        let memory_content = StateManager::read_memory(&agent.workspace);
+        let inbox_content = StateManager::read_inbox(&agent.workspace);
+        let tasks_content = StateManager::read_tasks(&agent.workspace);
+        let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
 
-        let heartbeat_prompt = format!(
-            "You are checking in on your project.\n\n\
-             ## Current State\n{}\n\n\
-             ## Your Mission\n{}\n\n\
-             If there is nothing to do right now, respond with exactly: HEARTBEAT_OK\n\
-             If there is work to do, describe what you'll do and begin working.",
-            state_content, agent.mission
+        let mut prompt_parts = vec![
+            "You are checking in on your project.".to_string(),
+            format!("\n## Your Mission\n{}", agent.mission),
+            format!("\n## Current State\n{}", state_content),
+        ];
+
+        if !tasks_content.trim().is_empty()
+            && tasks_content.trim() != default_empty_tasks()
+        {
+            prompt_parts.push(format!("\n## Tasks\n{}", tasks_content));
+        }
+
+        if !memory_content.trim().is_empty() {
+            let mem_lines: Vec<&str> = memory_content.lines().collect();
+            let mem_tail = if mem_lines.len() > 60 {
+                mem_lines[mem_lines.len() - 60..].join("\n")
+            } else {
+                memory_content.clone()
+            };
+            prompt_parts.push(format!("\n## Your Memory\n{}", mem_tail));
+        }
+
+        let has_inbox = !inbox_content.trim().is_empty()
+            && inbox_content.contains("---");
+        if has_inbox {
+            prompt_parts.push(format!(
+                "\n## Pending Messages from User (INBOX)\n{}\n\nIMPORTANT: Address these messages. After handling, remove them from .founder/INBOX.md.",
+                inbox_content
+            ));
+        }
+
+        if has_inbox {
+            prompt_parts.push(
+                "\nYou have pending messages — you MUST address them. Do NOT respond with HEARTBEAT_OK when there are messages.".to_string()
+            );
+        } else {
+            prompt_parts.push(
+                "\nIf there is nothing to do right now, respond with exactly: HEARTBEAT_OK\nIf there is work to do, describe what you'll do and begin working.".to_string()
+            );
+        }
+
+        prompt_parts.push(
+            "\nAfter completing work, update .founder/STATE.md with your current status and .founder/MEMORY.md with any new important facts or decisions.".to_string()
         );
+
+        let heartbeat_prompt = prompt_parts.join("\n");
 
         let config = TurnConfig {
             agent_id: agent.id.to_string(),
@@ -39,11 +87,22 @@ impl WorkSessionEngine {
             soul_content: Some(soul_content),
             resume_session_id: None,
             allowed_tools: agent.allowed_tools.clone(),
+            env_vars: env_vars.clone(),
         };
 
-        let result = match cli.run_turn(config, Some(pool)) {
+        let _ = app_handle.emit("agent-output", serde_json::json!({
+            "agent_id": agent.id.to_string(),
+            "type": "session_start",
+            "message": "Starting work session...",
+        }));
+
+        let result = match cli.run_turn_with_retry(config, Some(pool), Some(&app_handle), 2) {
             Ok(result) => result,
-            Err(e) => {
+            Err(turn_err) => {
+                let (outcome, is_rate_limited) = match &turn_err {
+                    TurnError::RateLimited(_) => (SessionOutcome::RateLimited, true),
+                    _ => (SessionOutcome::Error, false),
+                };
                 let log = WorkSessionLog {
                     id: session_uuid,
                     agent_id: agent.id,
@@ -52,12 +111,12 @@ impl WorkSessionEngine {
                     ended_at: Some(Utc::now().to_rfc3339()),
                     turns: 0,
                     trigger: SessionTrigger::Heartbeat,
-                    outcome: SessionOutcome::Error,
-                    summary: format!("Failed to start session: {e}"),
+                    outcome,
+                    summary: format!("Failed to start session: {turn_err}"),
                     events_json: "[]".to_string(),
                 };
                 db.log_work_session(&log)?;
-                return Ok(log);
+                return Ok(SessionResult { log, is_rate_limited });
             }
         };
 
@@ -80,7 +139,7 @@ impl WorkSessionEngine {
                 events_json: serialize_events(&all_events),
             };
             db.log_work_session(&log)?;
-            return Ok(log);
+            return Ok(SessionResult { log, is_rate_limited: false });
         }
 
         let max_turns = 20u32;
@@ -101,7 +160,7 @@ impl WorkSessionEngine {
                     events_json: serialize_events(&all_events),
                 };
                 db.log_work_session(&log)?;
-                return Ok(log);
+                return Ok(SessionResult { log, is_rate_limited: false });
             }
 
             let sid = match &final_session_id {
@@ -116,9 +175,10 @@ impl WorkSessionEngine {
                 soul_content: None,
                 resume_session_id: Some(sid),
                 allowed_tools: agent.allowed_tools.clone(),
+                env_vars: env_vars.clone(),
             };
 
-            match cli.run_turn(resume_config, Some(pool)) {
+            match cli.run_turn_with_retry(resume_config, Some(pool), Some(&app_handle), 2) {
                 Ok(turn_result) => {
                     turns += 1;
                     if let Some(ref sid) = turn_result.session_id {
@@ -144,10 +204,14 @@ impl WorkSessionEngine {
                             events_json: serialize_events(&all_events),
                         };
                         db.log_work_session(&log)?;
-                        return Ok(log);
+                        return Ok(SessionResult { log, is_rate_limited: false });
                     }
                 }
-                Err(e) => {
+                Err(turn_err) => {
+                    let (outcome, is_rate_limited) = match &turn_err {
+                        TurnError::RateLimited(_) => (SessionOutcome::RateLimited, true),
+                        _ => (SessionOutcome::Error, false),
+                    };
                     let log = WorkSessionLog {
                         id: session_uuid,
                         agent_id: agent.id,
@@ -156,12 +220,12 @@ impl WorkSessionEngine {
                         ended_at: Some(Utc::now().to_rfc3339()),
                         turns,
                         trigger: SessionTrigger::Heartbeat,
-                        outcome: SessionOutcome::Error,
-                        summary: format!("Error during turn: {e}"),
+                        outcome,
+                        summary: format!("Error during turn: {turn_err}"),
                         events_json: serialize_events(&all_events),
                     };
                     db.log_work_session(&log)?;
-                    return Ok(log);
+                    return Ok(SessionResult { log, is_rate_limited });
                 }
             }
         }
@@ -179,7 +243,7 @@ impl WorkSessionEngine {
             events_json: serialize_events(&all_events),
         };
         db.log_work_session(&log)?;
-        Ok(log)
+        Ok(SessionResult { log, is_rate_limited: false })
     }
 }
 
@@ -202,4 +266,8 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}...", &s[..max])
     }
+}
+
+fn default_empty_tasks() -> &'static str {
+    "# Tasks\n\n## In Progress\n\n\n## To Do\n\n\n## Done\n\n\n## Blocked"
 }

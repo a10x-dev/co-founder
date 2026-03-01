@@ -196,6 +196,12 @@ pub fn run() {
             commands::import_agent,
             commands::read_text_file,
             commands::detect_claude_cli,
+            commands::get_agent_env_vars,
+            commands::set_agent_env_var,
+            commands::delete_agent_env_var,
+            commands::write_text_file,
+            commands::trigger_manual_session,
+            commands::send_message_to_agent,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -219,19 +225,15 @@ pub fn run() {
     });
 }
 
-fn fail_agent(
+fn permanently_fail_agent(
     db: &db::Database,
     heartbeat: &heartbeat::HeartbeatScheduler,
     agent_id: &str,
     agent_uuid: &Uuid,
     status: models::AgentStatus,
 ) {
-    if let Ok(current) = db.get_agent(agent_uuid) {
-        if current.status == models::AgentStatus::Running {
-            heartbeat.stop_agent_heartbeat(agent_id);
-            let _ = db.update_agent_status(agent_uuid, &status);
-        }
-    }
+    heartbeat.stop_agent_heartbeat(agent_id);
+    let _ = db.update_agent_status(agent_uuid, &status);
 }
 
 async fn run_heartbeat_tick(
@@ -256,8 +258,30 @@ async fn run_heartbeat_tick(
         Err(_) => return,
     };
 
-    if agent.status != models::AgentStatus::Running {
-        return;
+    match agent.status {
+        models::AgentStatus::Running => {}
+        models::AgentStatus::Error => {
+            if agent.consecutive_errors >= models::MAX_CONSECUTIVE_ERRORS {
+                heartbeat.stop_agent_heartbeat(&agent_id);
+                return;
+            }
+            // Apply backoff: skip heartbeats based on error count.
+            // Error 1 → wait 1 tick, Error 2 → wait 2 ticks, etc.
+            // We use last_error_at to calculate cooldown.
+            if let Some(ref last_error) = agent.last_error_at {
+                if let Ok(error_time) = chrono::DateTime::parse_from_rfc3339(last_error) {
+                    let cooldown_secs = 60u64 * (1u64 << agent.consecutive_errors.min(6));
+                    let elapsed = chrono::Utc::now()
+                        .signed_duration_since(error_time)
+                        .num_seconds() as u64;
+                    if elapsed < cooldown_secs {
+                        return;
+                    }
+                }
+            }
+            let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Running);
+        }
+        _ => return,
     }
 
     if !process_pool.mark_pending(&agent_id) {
@@ -303,27 +327,46 @@ async fn run_heartbeat_tick(
     let _ = db.update_last_heartbeat(&agent_uuid, &now);
 
     match session_result {
-        Ok(Ok(log)) => {
+        Ok(Ok(session_result)) => {
+            let log = session_result.log;
             match log.outcome {
                 models::SessionOutcome::Blocked => {
-                    fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Paused);
+                    permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Paused);
                 }
-                models::SessionOutcome::Error => {
-                    fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+                models::SessionOutcome::Error | models::SessionOutcome::RateLimited => {
+                    let new_count = db.increment_consecutive_errors(&agent_uuid).unwrap_or(1);
+                    if new_count >= models::MAX_CONSECUTIVE_ERRORS {
+                        permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+                    } else {
+                        let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Error);
+                        // Heartbeat stays running — agent will auto-recover with backoff
+                    }
                 }
-                _ => {}
+                models::SessionOutcome::Completed | models::SessionOutcome::Timeout => {
+                    let _ = db.reset_consecutive_errors(&agent_uuid);
+                }
             }
-            let _ = app_handle.emit("session-completed", log);
+            let _ = app_handle.emit("session-completed", &log);
         }
         Ok(Err(err)) => {
-            fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+            let new_count = db.increment_consecutive_errors(&agent_uuid).unwrap_or(1);
+            if new_count >= models::MAX_CONSECUTIVE_ERRORS {
+                permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+            } else {
+                let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Error);
+            }
             let _ = app_handle.emit(
                 "session-runtime-error",
                 serde_json::json!({ "agent_id": agent_id, "error": err }),
             );
         }
         Err(join_err) => {
-            fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+            let new_count = db.increment_consecutive_errors(&agent_uuid).unwrap_or(1);
+            if new_count >= models::MAX_CONSECUTIVE_ERRORS {
+                permanently_fail_agent(&db, &heartbeat, &agent_id, &agent_uuid, models::AgentStatus::Error);
+            } else {
+                let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Error);
+            }
             let _ = app_handle.emit(
                 "session-runtime-error",
                 serde_json::json!({ "agent_id": agent_id, "error": format!("Runtime join error: {join_err}") }),

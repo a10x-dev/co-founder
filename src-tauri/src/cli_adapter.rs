@@ -1,5 +1,6 @@
 use std::io::BufRead;
 use std::process::{Command, Stdio};
+use tauri::{AppHandle, Emitter};
 use crate::process_pool::ProcessPool;
 
 #[derive(Clone, Debug)]
@@ -15,6 +16,7 @@ pub struct TurnConfig {
     pub soul_content: Option<String>,
     pub resume_session_id: Option<String>,
     pub allowed_tools: String,
+    pub env_vars: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +32,51 @@ pub struct StreamEvent {
     pub raw_json: String,
 }
 
+#[derive(Clone, Debug)]
+pub enum TurnError {
+    RateLimited(String),
+    Transient(String),
+    Fatal(String),
+}
+
+impl std::fmt::Display for TurnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TurnError::RateLimited(msg) => write!(f, "Rate limited: {msg}"),
+            TurnError::Transient(msg) => write!(f, "Transient error: {msg}"),
+            TurnError::Fatal(msg) => write!(f, "Fatal error: {msg}"),
+        }
+    }
+}
+
+impl TurnError {
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, TurnError::RateLimited(_))
+    }
+}
+
+fn classify_error(err: &str) -> TurnError {
+    let lower = err.to_lowercase();
+    if lower.contains("rate")
+        || lower.contains("429")
+        || lower.contains("overloaded")
+        || lower.contains("cooldown")
+        || lower.contains("too many requests")
+        || lower.contains("quota")
+        || lower.contains("capacity")
+    {
+        TurnError::RateLimited(err.to_string())
+    } else if lower.contains("not found")
+        || lower.contains("permission denied")
+        || lower.contains("no such file")
+        || lower.contains("enoent")
+    {
+        TurnError::Fatal(err.to_string())
+    } else {
+        TurnError::Transient(err.to_string())
+    }
+}
+
 impl CliAdapter {
     pub fn new(claude_path: String) -> Self {
         let path = if claude_path.is_empty() {
@@ -40,10 +87,59 @@ impl CliAdapter {
         CliAdapter { claude_path: path }
     }
 
+    pub fn run_turn_with_retry(
+        &self,
+        config: TurnConfig,
+        process_pool: Option<&ProcessPool>,
+        app_handle: Option<&AppHandle>,
+        max_retries: u32,
+    ) -> Result<TurnResult, TurnError> {
+        let backoff_secs = [30u64, 60, 120];
+
+        for attempt in 0..=max_retries {
+            match self.run_turn(config.clone(), process_pool, app_handle) {
+                Ok(result) => return Ok(result),
+                Err(err) => {
+                    let classified = classify_error(&err);
+                    if attempt == max_retries {
+                        return Err(classified);
+                    }
+                    match &classified {
+                        TurnError::Fatal(_) => return Err(classified),
+                        TurnError::RateLimited(_) | TurnError::Transient(_) => {
+                            let delay = backoff_secs.get(attempt as usize).copied().unwrap_or(120);
+                            eprintln!(
+                                "[agent-founder] Retry {}/{} for agent {} after {}s: {}",
+                                attempt + 1,
+                                max_retries,
+                                config.agent_id,
+                                delay,
+                                classified
+                            );
+                            if let Some(handle) = app_handle {
+                                let _ = handle.emit("agent-output", serde_json::json!({
+                                    "agent_id": config.agent_id,
+                                    "type": "retry",
+                                    "attempt": attempt + 1,
+                                    "max_retries": max_retries,
+                                    "delay_secs": delay,
+                                    "error": classified.to_string(),
+                                }));
+                            }
+                            std::thread::sleep(std::time::Duration::from_secs(delay));
+                        }
+                    }
+                }
+            }
+        }
+        Err(TurnError::Fatal("Exhausted retries".to_string()))
+    }
+
     pub fn run_turn(
         &self,
         config: TurnConfig,
         process_pool: Option<&ProcessPool>,
+        app_handle: Option<&AppHandle>,
     ) -> Result<TurnResult, String> {
         let mut cmd = Command::new(&self.claude_path);
         cmd.arg("-p").arg(&config.prompt);
@@ -65,6 +161,10 @@ impl CliAdapter {
 
         if let Some(ref soul) = config.soul_content {
             cmd.arg("--system-prompt").arg(soul);
+        }
+
+        for (key, value) in &config.env_vars {
+            cmd.env(key, value);
         }
 
         cmd.current_dir(&config.workspace);
@@ -106,6 +206,14 @@ impl CliAdapter {
                     event_type: event_type.clone(),
                     raw_json: line.clone(),
                 });
+
+                if let Some(handle) = app_handle {
+                    let _ = handle.emit("agent-output", serde_json::json!({
+                        "agent_id": config.agent_id,
+                        "type": event_type,
+                        "raw": line,
+                    }));
+                }
 
                 if event_type == "result" {
                     if let Some(sid) = parsed.get("session_id").and_then(|v| v.as_str()) {

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -55,4 +55,28 @@ export async function readTextFile(path: string): Promise<string> {
 
 export async function detectClaudeCli(): Promise<string | null> {
   return invoke("detect_claude_cli");
+}
+
+export async function getAgentEnvVars(agentId: string): Promise<AgentEnvVar[]> {
+  return invoke("get_agent_env_vars", { agentId });
+}
+
+export async function setAgentEnvVar(agentId: string, key: string, value: string): Promise<void> {
+  return invoke("set_agent_env_var", { agentId, key, value });
+}
+
+export async function deleteAgentEnvVar(agentId: string, key: string): Promise<void> {
+  return invoke("delete_agent_env_var", { agentId, key });
+}
+
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  return invoke("write_text_file", { path, content });
+}
+
+export async function triggerManualSession(id: string): Promise<void> {
+  return invoke("trigger_manual_session", { id });
+}
+
+export async function sendMessageToAgent(agentId: string, message: string): Promise<void> {
+  return invoke("send_message_to_agent", { agentId, message });
 }

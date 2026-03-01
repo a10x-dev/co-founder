@@ -1,7 +1,7 @@
 export type AgentStatus = "idle" | "running" | "paused" | "error";
 export type AutonomyLevel = "semi" | "yolo";
 export type SessionTrigger = "heartbeat" | "manual" | "continued";
-export type SessionOutcome = "completed" | "blocked" | "timeout" | "error";
+export type SessionOutcome = "completed" | "blocked" | "timeout" | "error" | "rate_limited";
 
 export interface Agent {
   id: string;
@@ -19,6 +19,8 @@ export interface Agent {
   total_sessions: number;
   personality: string;
   checkin_interval_secs: number;
+  consecutive_errors: number;
+  last_error_at: string | null;
 }
 
 export interface CreateAgentRequest {
@@ -64,4 +66,12 @@ export interface ActivityEntry {
   description: string;
   timestamp: string;
   details?: string;
+}
+
+export interface AgentEnvVar {
+  id: string;
+  agent_id: string;
+  key: string;
+  value: string;
+  created_at: string;
 }

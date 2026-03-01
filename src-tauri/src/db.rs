@@ -73,13 +73,46 @@ impl Database {
         )
         .map_err(|e| format!("Migration failed: {e}"))?;
 
+        Self::migrate_add_reliability_columns(&conn)?;
+        Self::migrate_add_env_vars_table(&conn)?;
+
+        Ok(())
+    }
+
+    fn migrate_add_env_vars_table(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS agent_env_vars (
+                id TEXT PRIMARY KEY,
+                agent_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id),
+                UNIQUE(agent_id, key)
+            );",
+        )
+        .map_err(|e| format!("Env vars migration failed: {e}"))?;
+        Ok(())
+    }
+
+    fn migrate_add_reliability_columns(conn: &Connection) -> Result<(), String> {
+        let has_col: bool = conn
+            .prepare("SELECT consecutive_errors FROM agents LIMIT 0")
+            .is_ok();
+        if !has_col {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN consecutive_errors INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE agents ADD COLUMN last_error_at TEXT;",
+            )
+            .map_err(|e| format!("Reliability migration failed: {e}"))?;
+        }
         Ok(())
     }
 
     pub fn get_agents(&self) -> Result<Vec<Agent>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare("SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs FROM agents ORDER BY created_at DESC")
+            .prepare("SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at FROM agents ORDER BY created_at DESC")
             .map_err(|e| format!("Query error: {e}"))?;
 
         let agents = stmt
@@ -100,6 +133,8 @@ impl Database {
                     total_sessions: row.get::<_, i32>(12)? as u32,
                     personality: row.get(13)?,
                     checkin_interval_secs: row.get::<_, i64>(14)? as u64,
+                    consecutive_errors: row.get::<_, i32>(15)? as u32,
+                    last_error_at: row.get(16)?,
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?
@@ -112,7 +147,7 @@ impl Database {
     pub fn get_agent(&self, id: &Uuid) -> Result<Agent, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.query_row(
-            "SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs FROM agents WHERE id = ?1",
+            "SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at FROM agents WHERE id = ?1",
             params![id.to_string()],
             |row| {
                 Ok(Agent {
@@ -131,6 +166,8 @@ impl Database {
                     total_sessions: row.get::<_, i32>(12)? as u32,
                     personality: row.get(13)?,
                     checkin_interval_secs: row.get::<_, i64>(14)? as u64,
+                    consecutive_errors: row.get::<_, i32>(15)? as u32,
+                    last_error_at: row.get(16)?,
                 })
             },
         )
@@ -140,7 +177,7 @@ impl Database {
     pub fn create_agent(&self, agent: &Agent) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(
-            "INSERT INTO agents (id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO agents (id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 agent.id.to_string(),
                 agent.name,
@@ -157,6 +194,8 @@ impl Database {
                 agent.total_sessions as i32,
                 agent.personality,
                 agent.checkin_interval_secs as i64,
+                agent.consecutive_errors as i32,
+                agent.last_error_at,
             ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
@@ -180,6 +219,34 @@ impl Database {
             params![timestamp, id.to_string()],
         )
         .map_err(|e| format!("Update heartbeat error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn increment_consecutive_errors(&self, id: &Uuid) -> Result<u32, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE agents SET consecutive_errors = consecutive_errors + 1, last_error_at = ?1 WHERE id = ?2",
+            params![now, id.to_string()],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+
+        conn.query_row(
+            "SELECT consecutive_errors FROM agents WHERE id = ?1",
+            params![id.to_string()],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|v| v as u32)
+        .map_err(|e| format!("Query error: {e}"))
+    }
+
+    pub fn reset_consecutive_errors(&self, id: &Uuid) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET consecutive_errors = 0, last_error_at = NULL WHERE id = ?1",
+            params![id.to_string()],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
         Ok(())
     }
 
@@ -247,6 +314,56 @@ impl Database {
         .map_err(|e| format!("Update sessions count error: {e}"))?;
 
         Ok(())
+    }
+
+    pub fn get_agent_env_vars(&self, agent_id: &Uuid) -> Result<Vec<AgentEnvVar>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut stmt = conn
+            .prepare("SELECT id, agent_id, key, value, created_at FROM agent_env_vars WHERE agent_id = ?1 ORDER BY key ASC")
+            .map_err(|e| format!("Query error: {e}"))?;
+
+        let vars = stmt
+            .query_map(params![agent_id.to_string()], |row| {
+                Ok(AgentEnvVar {
+                    id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
+                    agent_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
+                    key: row.get(2)?,
+                    value: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(vars)
+    }
+
+    pub fn set_agent_env_var(&self, agent_id: &Uuid, key: &str, value: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let id = Uuid::new_v4();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO agent_env_vars (id, agent_id, key, value, created_at) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(agent_id, key) DO UPDATE SET value = ?4",
+            params![id.to_string(), agent_id.to_string(), key, value, now],
+        )
+        .map_err(|e| format!("Insert env var error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_agent_env_var(&self, agent_id: &Uuid, key: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "DELETE FROM agent_env_vars WHERE agent_id = ?1 AND key = ?2",
+            params![agent_id.to_string(), key],
+        )
+        .map_err(|e| format!("Delete env var error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_agent_env_vars_as_pairs(&self, agent_id: &Uuid) -> Result<Vec<(String, String)>, String> {
+        let vars = self.get_agent_env_vars(agent_id)?;
+        Ok(vars.into_iter().map(|v| (v.key, v.value)).collect())
     }
 
     pub fn get_global_settings(&self) -> Result<GlobalSettings, String> {

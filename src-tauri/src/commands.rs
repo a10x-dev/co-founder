@@ -48,6 +48,8 @@ pub async fn create_agent(
         total_sessions: 0,
         personality: req.personality,
         checkin_interval_secs: req.checkin_interval_secs,
+        consecutive_errors: 0,
+        last_error_at: None,
     };
 
     state.db.create_agent(&agent)?;
@@ -104,6 +106,7 @@ pub async fn start_agent(
     let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
 
+    let _ = state.db.reset_consecutive_errors(&uuid);
     state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
     state
         .heartbeat
@@ -166,6 +169,8 @@ pub async fn import_agent(
         total_sessions: 0,
         personality: req.personality,
         checkin_interval_secs: req.checkin_interval_secs,
+        consecutive_errors: 0,
+        last_error_at: None,
     };
 
     state.db.create_agent(&agent)?;
@@ -224,4 +229,97 @@ fn expand_home(path: &str) -> String {
 #[tauri::command]
 pub async fn detect_claude_cli() -> Result<Option<String>, String> {
     Ok(detect_claude_path())
+}
+
+#[tauri::command]
+pub async fn get_agent_env_vars(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<AgentEnvVar>, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.db.get_agent_env_vars(&uuid)
+}
+
+#[tauri::command]
+pub async fn set_agent_env_var(
+    agent_id: String,
+    key: String,
+    value: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.db.set_agent_env_var(&uuid, &key, &value)
+}
+
+#[tauri::command]
+pub async fn delete_agent_env_var(
+    agent_id: String,
+    key: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.db.delete_agent_env_var(&uuid, &key)
+}
+
+#[tauri::command]
+pub async fn write_text_file(path: String, content: String) -> Result<(), String> {
+    let expanded = expand_home(&path);
+    let canonical_parent = std::path::Path::new(&expanded)
+        .parent()
+        .ok_or("Invalid path")?;
+    let home = std::env::var("HOME").map_err(|_| "Could not determine HOME directory")?;
+    let home_path = std::path::Path::new(&home);
+    let resolved_parent = std::fs::canonicalize(canonical_parent)
+        .map_err(|e| format!("Could not resolve path: {e}"))?;
+    if !resolved_parent.starts_with(home_path) {
+        return Err("Writing files outside your home directory is not allowed".into());
+    }
+    fs::write(&expanded, content).map_err(|e| format!("Could not write file: {e}"))
+}
+
+#[tauri::command]
+pub async fn trigger_manual_session(
+    id: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+
+    if agent.status != AgentStatus::Running {
+        let _ = state.db.reset_consecutive_errors(&uuid);
+        state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
+        state.heartbeat.start_agent_heartbeat(
+            id.clone(),
+            agent.checkin_interval_secs,
+            app.clone(),
+        );
+    }
+
+    let payload = serde_json::json!({
+        "agent_id": id,
+        "timestamp": Utc::now().to_rfc3339(),
+        "reason": "manual",
+    });
+    let _ = app.emit("heartbeat-tick", payload);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn send_message_to_agent(
+    agent_id: String,
+    message: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let inbox_path = format!("{}/.founder/INBOX.md", agent.workspace.trim_end_matches('/'));
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+
+    let entry = format!("\n---\n**[{}]** {}\n", now, message);
+
+    let existing = fs::read_to_string(&inbox_path).unwrap_or_else(|_| "# Inbox\n\nMessages from the user.\n".to_string());
+    let updated = format!("{}{}", existing, entry);
+    fs::write(&inbox_path, updated).map_err(|e| format!("Failed to write INBOX.md: {e}"))?;
+    Ok(())
 }

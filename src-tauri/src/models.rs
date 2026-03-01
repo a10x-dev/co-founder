@@ -93,6 +93,7 @@ pub enum SessionOutcome {
     Blocked,
     Timeout,
     Error,
+    RateLimited,
 }
 
 impl fmt::Display for SessionOutcome {
@@ -102,6 +103,7 @@ impl fmt::Display for SessionOutcome {
             SessionOutcome::Blocked => write!(f, "blocked"),
             SessionOutcome::Timeout => write!(f, "timeout"),
             SessionOutcome::Error => write!(f, "error"),
+            SessionOutcome::RateLimited => write!(f, "rate_limited"),
         }
     }
 }
@@ -112,6 +114,7 @@ impl SessionOutcome {
             "blocked" => SessionOutcome::Blocked,
             "timeout" => SessionOutcome::Timeout,
             "error" => SessionOutcome::Error,
+            "rate_limited" => SessionOutcome::RateLimited,
             _ => SessionOutcome::Completed,
         }
     }
@@ -134,6 +137,19 @@ pub struct Agent {
     pub total_sessions: u32,
     pub personality: String,
     pub checkin_interval_secs: u64,
+    pub consecutive_errors: u32,
+    pub last_error_at: Option<String>,
+}
+
+pub const MAX_CONSECUTIVE_ERRORS: u32 = 5;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentEnvVar {
+    pub id: Uuid,
+    pub agent_id: Uuid,
+    pub key: String,
+    pub value: String,
+    pub created_at: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

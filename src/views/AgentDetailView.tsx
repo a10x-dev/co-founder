@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
@@ -14,6 +14,8 @@ import {
   MessageCircle,
   AlertTriangle,
   Trash2,
+  ShieldAlert,
+  RefreshCw,
 } from "lucide-react";
 import type { Agent, AgentStatus, WorkSessionLog, ActivityEntry } from "@/types";
 import {
@@ -22,7 +24,15 @@ import {
   startAgent,
   pauseAgent,
   stopAgent,
+  getAgentEnvVars,
+  setAgentEnvVar,
+  deleteAgentEnvVar,
+  readTextFile,
+  writeTextFile,
+  triggerManualSession,
+  sendMessageToAgent,
 } from "@/lib/api";
+import type { AgentEnvVar } from "@/types";
 import { formatRelativeTime } from "@/lib/formatTime";
 
 const STATUS_CONFIG: Record<
@@ -55,6 +65,7 @@ const OUTCOME_CONFIG: Record<
   blocked: { label: "Blocked", color: "var(--status-working)" },
   timeout: { label: "Timeout", color: "var(--status-paused)" },
   error: { label: "Error", color: "var(--status-error)" },
+  rate_limited: { label: "Rate Limited", color: "var(--status-paused)" },
 };
 
 interface StoredEvent {
@@ -244,12 +255,36 @@ export default function AgentDetailView({
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [removeFounderFiles, setRemoveFounderFiles] = useState(false);
+  const [liveOutput, setLiveOutput] = useState<Array<{ type: string; message: string; timestamp: number }>>([]);
+  const [showLive, setShowLive] = useState(true);
+  const liveEndRef = useRef<HTMLDivElement>(null);
+
+  const [activeTab, setActiveTab] = useState<"activity" | "secrets" | "files" | "messages">("activity");
+
+  const [envVars, setEnvVars] = useState<AgentEnvVar[]>([]);
+  const [newEnvKey, setNewEnvKey] = useState("");
+  const [newEnvValue, setNewEnvValue] = useState("");
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+
+  const [soulContent, setSoulContent] = useState("");
+  const [missionContent, setMissionContent] = useState("");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [fileSaving, setFileSaving] = useState(false);
+
+  const [messageText, setMessageText] = useState("");
+  const [messageSending, setMessageSending] = useState(false);
+  const [inboxContent, setInboxContent] = useState("");
 
   useEffect(() => {
     getWorkSessions(agent.id).then(setSessions).catch(() => {
       setSessions([]);
     });
-  }, [agent.id]);
+    getAgentEnvVars(agent.id).then(setEnvVars).catch(() => {});
+    readTextFile(`${agent.workspace}/.founder/SOUL.md`).then(setSoulContent).catch(() => {});
+    readTextFile(`${agent.workspace}/.founder/MISSION.md`).then(setMissionContent).catch(() => {});
+    readTextFile(`${agent.workspace}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => {});
+    readTextFile(`${agent.workspace}/.founder/INBOX.md`).then(setInboxContent).catch(() => {});
+  }, [agent.id, agent.workspace]);
 
   useEffect(() => {
     let active = true;
@@ -268,6 +303,73 @@ export default function AgentDetailView({
       if (unlisten) unlisten();
     };
   }, [agent.id]);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | null = null;
+
+    listen<{ agent_id: string; type: string; raw?: string; message?: string; attempt?: number; delay_secs?: number; error?: string }>(
+      "agent-output",
+      (event) => {
+        if (!active) return;
+        if (event.payload?.agent_id !== agent.id) return;
+        const p = event.payload;
+
+        let message = "";
+        if (p.type === "session_start") {
+          message = p.message || "Starting session...";
+        } else if (p.type === "retry") {
+          message = `Retrying (${p.attempt}/${3})... waiting ${p.delay_secs}s`;
+        } else if (p.type === "assistant") {
+          try {
+            const raw = JSON.parse(p.raw || "{}");
+            message = (raw.content as string)?.slice(0, 200) || "Thinking...";
+          } catch {
+            message = "Thinking...";
+          }
+        } else if (p.type === "tool_call") {
+          try {
+            const raw = JSON.parse(p.raw || "{}");
+            const tool = (raw.tool as string) || "tool";
+            const input = raw.input as Record<string, unknown> | undefined;
+            if (tool.includes("write")) {
+              message = `Writing ${(input?.path as string) || "file"}...`;
+            } else if (tool.includes("read")) {
+              message = `Reading ${(input?.path as string) || "file"}...`;
+            } else if (tool.includes("bash")) {
+              message = `Running: ${((input?.command as string) || "command").slice(0, 100)}`;
+            } else {
+              message = `Using tool: ${tool}`;
+            }
+          } catch {
+            message = "Using a tool...";
+          }
+        } else if (p.type === "result") {
+          message = "Session turn complete.";
+        } else {
+          return;
+        }
+
+        setLiveOutput((prev) => {
+          const next = [...prev, { type: p.type, message, timestamp: Date.now() }];
+          return next.slice(-50);
+        });
+      },
+    )
+      .then((fn) => {
+        if (active) unlisten = fn;
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      if (unlisten) unlisten();
+    };
+  }, [agent.id]);
+
+  useEffect(() => {
+    liveEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [liveOutput]);
 
   const config = STATUS_CONFIG[agent.status];
   const nextCheckIn = formatNextCheckIn(
@@ -333,6 +435,50 @@ export default function AgentDetailView({
       else next.add(id);
       return next;
     });
+  };
+
+  const handleAddEnvVar = async () => {
+    if (!newEnvKey.trim()) return;
+    await setAgentEnvVar(agent.id, newEnvKey.trim(), newEnvValue);
+    setNewEnvKey("");
+    setNewEnvValue("");
+    getAgentEnvVars(agent.id).then(setEnvVars).catch(() => {});
+  };
+
+  const handleDeleteEnvVar = async (key: string) => {
+    await deleteAgentEnvVar(agent.id, key);
+    getAgentEnvVars(agent.id).then(setEnvVars).catch(() => {});
+  };
+
+  const handleSaveFile = async (filename: string, content: string) => {
+    setFileSaving(true);
+    try {
+      await writeTextFile(`${agent.workspace}/.founder/${filename}`, content);
+    } finally {
+      setFileSaving(false);
+    }
+  };
+
+  const handleRunNow = async () => {
+    setBusy(true);
+    try {
+      await triggerManualSession(agent.id);
+      onRefetch();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim()) return;
+    setMessageSending(true);
+    try {
+      await sendMessageToAgent(agent.id, messageText.trim());
+      setMessageText("");
+      readTextFile(`${agent.workspace}/.founder/INBOX.md`).then(setInboxContent).catch(() => {});
+    } finally {
+      setMessageSending(false);
+    }
   };
 
   const canPause = agent.status === "running";
@@ -410,6 +556,18 @@ export default function AgentDetailView({
               )}
             </button>
           )}
+          <button
+            onClick={handleRunNow}
+            disabled={busy}
+            className={ghostButton}
+            style={{
+              color: "var(--text-secondary)",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            <Play size={14} strokeWidth={2} />
+            Run Now
+          </button>
         </div>
       </div>
 
@@ -458,7 +616,140 @@ export default function AgentDetailView({
         </div>
       </div>
 
-      <div style={{ marginTop: 24 }}>
+      {agent.consecutive_errors > 0 && (
+        <div
+          className="rounded-xl p-4 border flex gap-3 mt-4"
+          style={{
+            background: "var(--bg-surface)",
+            borderColor: "var(--border-default)",
+            borderLeftWidth: 3,
+            borderLeftColor:
+              agent.consecutive_errors >= 5
+                ? "var(--status-error)"
+                : "var(--status-paused)",
+          }}
+        >
+          {agent.consecutive_errors >= 5 ? (
+            <ShieldAlert
+              size={20}
+              className="shrink-0 mt-0.5"
+              style={{ color: "var(--status-error)" }}
+            />
+          ) : (
+            <RefreshCw
+              size={20}
+              className="shrink-0 mt-0.5"
+              style={{ color: "var(--status-paused)" }}
+            />
+          )}
+          <div className="min-w-0">
+            <p
+              className="text-[15px] font-medium"
+              style={{ color: "var(--text-primary)" }}
+            >
+              {agent.consecutive_errors >= 5
+                ? "Agent permanently stopped after 5 consecutive errors"
+                : `Auto-recovering (${agent.consecutive_errors}/5 errors)`}
+            </p>
+            <p
+              className="text-[14px]"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {agent.consecutive_errors >= 5
+                ? "Click Start to reset the error counter and try again."
+                : "The agent will retry automatically with increasing backoff delays."}
+            </p>
+            {agent.last_error_at && (
+              <p
+                className="text-[13px] mt-1"
+                style={{ color: "var(--text-tertiary)" }}
+              >
+                Last error: {formatRelativeTime(agent.last_error_at)}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {agent.status === "running" && liveOutput.length > 0 && (
+        <div style={{ marginTop: 24 }}>
+          <div className="flex items-center justify-between mb-2">
+            <h2
+              className="text-[17px] font-semibold flex items-center gap-2"
+              style={{ color: "var(--text-primary)" }}
+            >
+              <span
+                className="w-2 h-2 rounded-full animate-pulse"
+                style={{ background: "var(--status-active)" }}
+              />
+              Live
+            </h2>
+            <button
+              onClick={() => setShowLive((v) => !v)}
+              className="text-[13px] font-medium cursor-pointer"
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {showLive ? "Hide" : "Show"}
+            </button>
+          </div>
+          {showLive && (
+            <div
+              className="rounded-xl border overflow-hidden"
+              style={{
+                background: "var(--bg-inset)",
+                borderColor: "var(--border-default)",
+                maxHeight: 240,
+                overflowY: "auto",
+              }}
+            >
+              <div className="p-3 space-y-1 font-mono text-[13px]">
+                {liveOutput.map((entry, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2"
+                    style={{ color: entry.type === "retry" ? "var(--status-paused)" : "var(--text-secondary)" }}
+                  >
+                    <span
+                      className="shrink-0 text-[11px] tabular-nums"
+                      style={{ color: "var(--text-tertiary)", minWidth: 48 }}
+                    >
+                      {new Date(entry.timestamp).toLocaleTimeString("en-US", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                        hour12: false,
+                      })}
+                    </span>
+                    <span className="break-all">{entry.message}</span>
+                  </div>
+                ))}
+                <div ref={liveEndRef} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1 mt-6 mb-4" style={{ borderBottom: "1px solid var(--border-default)" }}>
+        {(["activity", "messages", "files", "secrets"] as const).map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className="px-3 py-2 text-[14px] font-medium cursor-pointer transition-colors"
+            style={{
+              color: activeTab === tab ? "var(--text-primary)" : "var(--text-tertiary)",
+              borderBottom: activeTab === tab ? "2px solid var(--text-primary)" : "2px solid transparent",
+              marginBottom: -1,
+            }}
+          >
+            {tab === "activity" ? "Activity" : tab === "messages" ? "Messages" : tab === "files" ? "Files" : "Secrets"}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "activity" && (
+      <>
+        <div>
         <h2
           className="text-[17px] font-semibold mb-4"
           style={{ color: "var(--text-primary)" }}
@@ -675,6 +966,174 @@ export default function AgentDetailView({
           </div>
         )}
       </div>
+
+      {/* end activity tab */}
+      </>
+      )}
+
+      {activeTab === "messages" && (
+        <div className="space-y-4">
+          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>
+            Message your agent
+          </h2>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+              placeholder="Type a message for the agent..."
+              className="flex-1 h-10 px-3 rounded-lg text-[14px]"
+              style={{
+                background: "var(--bg-inset)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-default)",
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={messageSending || !messageText.trim()}
+              className="h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ background: "var(--text-primary)", color: "var(--bg-base)" }}
+            >
+              {messageSending ? "Sending..." : "Send"}
+            </button>
+          </div>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Messages are written to .founder/INBOX.md and read by the agent on the next heartbeat.
+          </p>
+          {inboxContent && inboxContent.includes("---") && (
+            <div
+              className="rounded-xl border p-4"
+              style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
+            >
+              <h3 className="text-[15px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
+                Pending messages
+              </h3>
+              <pre
+                className="text-[13px] font-mono whitespace-pre-wrap"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                {inboxContent}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "files" && (
+        <div className="space-y-6">
+          {[
+            { label: "SOUL.md", value: soulContent, setter: setSoulContent, filename: "SOUL.md" },
+            { label: "MISSION.md", value: missionContent, setter: setMissionContent, filename: "MISSION.md" },
+            { label: "MEMORY.md", value: memoryContent, setter: setMemoryContent, filename: "MEMORY.md" },
+          ].map(({ label, value, setter, filename }) => (
+            <div key={label}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>
+                  {label}
+                </h3>
+                <button
+                  onClick={() => handleSaveFile(filename, value)}
+                  disabled={fileSaving}
+                  className="text-[13px] font-medium px-3 py-1 rounded-lg cursor-pointer disabled:opacity-50"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
+                >
+                  {fileSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+              <textarea
+                value={value}
+                onChange={(e) => setter(e.target.value)}
+                rows={8}
+                className="w-full rounded-xl p-3 text-[14px] font-mono resize-y"
+                style={{
+                  background: "var(--bg-inset)",
+                  color: "var(--text-primary)",
+                  border: "1px solid var(--border-default)",
+                  outline: "none",
+                  minHeight: 120,
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {activeTab === "secrets" && (
+        <div className="space-y-4">
+          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>
+            Environment Variables
+          </h2>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            These are injected into the Claude CLI process. Use them for API keys, tokens, and other secrets.
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newEnvKey}
+              onChange={(e) => setNewEnvKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+              placeholder="KEY_NAME"
+              className="w-48 h-10 px-3 rounded-lg text-[14px] font-mono"
+              style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
+            />
+            <input
+              type="password"
+              value={newEnvValue}
+              onChange={(e) => setNewEnvValue(e.target.value)}
+              placeholder="value"
+              className="flex-1 h-10 px-3 rounded-lg text-[14px] font-mono"
+              style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
+            />
+            <button
+              onClick={handleAddEnvVar}
+              disabled={!newEnvKey.trim()}
+              className="h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ background: "var(--text-primary)", color: "var(--bg-base)" }}
+            >
+              Add
+            </button>
+          </div>
+          {envVars.length > 0 && (
+            <div
+              className="rounded-xl border overflow-hidden"
+              style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
+            >
+              {envVars.map((envVar, i) => (
+                <div
+                  key={envVar.key}
+                  className="flex items-center gap-3 px-4 py-3"
+                  style={{ borderBottom: i < envVars.length - 1 ? "1px solid var(--border-default)" : "none" }}
+                >
+                  <span className="font-mono text-[14px] font-medium shrink-0" style={{ color: "var(--text-primary)", minWidth: 160 }}>
+                    {envVar.key}
+                  </span>
+                  <span
+                    className="flex-1 font-mono text-[14px] truncate cursor-pointer"
+                    style={{ color: "var(--text-secondary)" }}
+                    onClick={() => setRevealedKeys((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(envVar.key)) next.delete(envVar.key);
+                      else next.add(envVar.key);
+                      return next;
+                    })}
+                  >
+                    {revealedKeys.has(envVar.key) ? envVar.value : "••••••••"}
+                  </span>
+                  <button
+                    onClick={() => handleDeleteEnvVar(envVar.key)}
+                    className="text-[13px] cursor-pointer shrink-0"
+                    style={{ color: "var(--status-error)" }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ marginTop: 32 }}>
         <h2 className="text-[17px] font-semibold mb-3" style={{ color: "var(--status-error)" }}>

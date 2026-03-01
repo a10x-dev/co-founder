@@ -18,13 +18,7 @@ impl StateManager {
         fs::create_dir_all(&founder_path)
             .map_err(|e| format!("Failed to create workspace: {e}"))?;
 
-        let templates = vec![
-            ("SOUL.md", default_soul_template(personality)),
-            ("MISSION.md", default_mission_template(name, mission)),
-            ("STATE.md", default_state_template()),
-            ("HEARTBEAT.md", default_heartbeat_template()),
-            ("JOURNAL.md", default_journal_template()),
-        ];
+        let templates = workspace_templates(name, personality, mission);
 
         for (filename, content) in templates {
             let path = format!("{}/{}", founder_path, filename);
@@ -61,13 +55,7 @@ impl StateManager {
             .and_then(|n| n.to_str())
             .unwrap_or("Project");
 
-        let templates = vec![
-            ("SOUL.md", default_soul_template(personality)),
-            ("MISSION.md", default_mission_template(name, mission)),
-            ("STATE.md", default_state_template()),
-            ("HEARTBEAT.md", default_heartbeat_template()),
-            ("JOURNAL.md", default_journal_template()),
-        ];
+        let templates = workspace_templates(name, personality, mission);
 
         for (filename, content) in templates {
             let file_path = format!("{}/{}", founder_path, filename);
@@ -78,6 +66,21 @@ impl StateManager {
         }
 
         Ok(expanded)
+    }
+
+    pub fn read_memory(workspace: &str) -> String {
+        let path = format!("{}/.founder/MEMORY.md", workspace);
+        fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    pub fn read_inbox(workspace: &str) -> String {
+        let path = format!("{}/.founder/INBOX.md", workspace);
+        fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    pub fn read_tasks(workspace: &str) -> String {
+        let path = format!("{}/.founder/TASKS.md", workspace);
+        fs::read_to_string(&path).unwrap_or_default()
     }
 
     pub fn get_soul_content(workspace: &str, personality: &str) -> String {
@@ -94,6 +97,19 @@ impl StateManager {
         let state_path = format!("{}/.founder/STATE.md", workspace);
         fs::read_to_string(&state_path).unwrap_or_else(|_| "No state file found.".to_string())
     }
+}
+
+fn workspace_templates(name: &str, personality: &str, mission: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("SOUL.md", default_soul_template(personality)),
+        ("MISSION.md", default_mission_template(name, mission)),
+        ("STATE.md", default_state_template()),
+        ("HEARTBEAT.md", default_heartbeat_template()),
+        ("JOURNAL.md", default_journal_template()),
+        ("MEMORY.md", default_memory_template()),
+        ("INBOX.md", default_inbox_template()),
+        ("TASKS.md", default_tasks_template()),
+    ]
 }
 
 fn slugify(name: &str) -> String {
@@ -222,6 +238,49 @@ fn default_journal_template() -> String {
 Work session history will be logged here.
 
 ---
+"#
+    .to_string()
+}
+
+fn default_memory_template() -> String {
+    r#"# Memory
+
+Long-term knowledge that persists across sessions. Update this file with important facts, decisions, credentials references, and context you'll need later.
+
+## Key Facts
+
+
+## Decisions Made
+
+
+## Important Context
+
+"#
+    .to_string()
+}
+
+fn default_inbox_template() -> String {
+    r#"# Inbox
+
+Messages from the user. Process these on each check-in and remove handled items.
+"#
+    .to_string()
+}
+
+fn default_tasks_template() -> String {
+    r#"# Tasks
+
+## In Progress
+
+
+## To Do
+
+
+## Done
+
+
+## Blocked
+
 "#
     .to_string()
 }
