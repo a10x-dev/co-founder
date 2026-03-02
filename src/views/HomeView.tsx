@@ -155,7 +155,7 @@ export default function HomeView({
     <div className="max-w-[860px] mx-auto px-8 pt-10">
       <div className="flex items-start justify-between mb-1">
         <h1 className="text-[28px] font-semibold" style={{ color: "var(--text-primary)" }}>
-          Command Center
+          Co-Founders
         </h1>
         <div className="flex gap-2 shrink-0">
           {runningCount > 0 && (

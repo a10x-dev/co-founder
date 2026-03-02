@@ -10,7 +10,6 @@ import {
   Send,
   StopCircle,
   Bot,
-  User,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -225,39 +224,83 @@ function ThinkingBlock({
   }, [isLive, msg.startTime]);
 
   const duration = msg.durationMs != null ? msg.durationMs : liveMs;
-  const label = isLive
-    ? `Thinking… ${formatDuration(duration)}`
-    : `Thought for ${formatDuration(duration)}`;
+  const latestStep = msg.steps[msg.steps.length - 1];
 
   return (
-    <div className="my-1">
-      <button
-        onClick={onToggle}
-        className="flex items-center gap-1.5 text-[12px] cursor-pointer select-none"
-        style={{ color: "var(--text-tertiary)" }}
+    <div className="flex items-start gap-2.5">
+      <div
+        className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
+        style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
       >
         {isLive ? (
-          <Loader2 size={11} className="animate-spin shrink-0" />
-        ) : expanded ? (
-          <ChevronDown size={11} className="shrink-0" />
+          <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
         ) : (
-          <ChevronRight size={11} className="shrink-0" />
+          <Bot size={13} style={{ color: "var(--text-secondary)" }} />
         )}
-        <span className="italic">{label}</span>
-      </button>
-
-      {expanded && msg.steps.length > 0 && (
-        <div
-          className="mt-1.5 ml-3.5 pl-3 border-l space-y-1"
-          style={{ borderColor: "var(--border-default)" }}
+      </div>
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={onToggle}
+          className="flex items-center gap-2 cursor-pointer select-none group"
+          style={{ color: "var(--text-tertiary)" }}
         >
-          {msg.steps.map((step, i) => (
-            <p key={i} className="text-[11px] leading-relaxed" style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>
-              {step}
-            </p>
+          {isLive ? (
+            <span className="text-[13px]">
+              {latestStep
+                ? <><span className="truncate inline-block max-w-[300px] align-bottom" style={{ color: "var(--text-secondary)" }}>{latestStep}</span>{" "}<span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>{formatDuration(duration)}</span></>
+                : <>Thinking… <span className="text-[12px]">{formatDuration(duration)}</span></>
+              }
+            </span>
+          ) : (
+            <span className="text-[13px] flex items-center gap-1">
+              {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <span>Thought for {formatDuration(duration)}</span>
+              <span className="text-[12px]">· {msg.steps.length} step{msg.steps.length !== 1 ? "s" : ""}</span>
+            </span>
+          )}
+        </button>
+
+        {expanded && msg.steps.length > 0 && (
+          <div
+            className="mt-2 pl-3 border-l space-y-1"
+            style={{ borderColor: "var(--border-default)" }}
+          >
+            {msg.steps.map((step, i) => (
+              <p key={i} className="text-[12px] leading-relaxed truncate" style={{ color: "var(--text-tertiary)" }}>
+                {step}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TypingIndicator() {
+  return (
+    <div className="flex gap-2.5 items-center">
+      <div
+        className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
+        style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
+      >
+        <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <span className="flex gap-1">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="w-1.5 h-1.5 rounded-full animate-bounce"
+              style={{
+                background: "var(--text-tertiary)",
+                animationDelay: `${i * 150}ms`,
+                animationDuration: "1s",
+              }}
+            />
           ))}
-        </div>
-      )}
+        </span>
+      </div>
     </div>
   );
 }
@@ -293,15 +336,6 @@ export default function LiveSessionView({
 
   const [chatTitle, setChatTitle] = useState("New Chat");
   const titleDerivedRef = useRef(false);
-
-  // Pinned = last user message
-  let lastUserMsg: Extract<ChatMessage, { role: "user" }> | undefined;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
-      lastUserMsg = messages[i] as Extract<ChatMessage, { role: "user" }>;
-      break;
-    }
-  }
 
   // ── Reset on session change ──────────────────────────────────────────────
   useEffect(() => {
@@ -353,12 +387,16 @@ export default function LiveSessionView({
   }, [messages, isNearBottom]);
 
   // ── Auto-grow textarea ───────────────────────────────────────────────────
+  const maxTextareaHeight = typeof window !== "undefined" ? Math.round(window.innerHeight * 0.35) : 300;
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  }, [input]);
+    const clamped = Math.min(el.scrollHeight, maxTextareaHeight);
+    el.style.height = `${clamped}px`;
+    el.style.overflowY = el.scrollHeight > maxTextareaHeight ? "auto" : "hidden";
+  }, [input, maxTextareaHeight]);
 
   // ── Event listeners ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -458,12 +496,7 @@ export default function LiveSessionView({
             }
             return m;
           });
-          // Remove orphaned thinking block if no agent text followed
-          const afterThink = next.findIndex((m) => m.id === thinkingId);
-          const hasResponse = afterThink < next.length - 1 && next[afterThink + 1]?.role === "agent";
-          if (!hasResponse) {
-            // keep it but finalize — the user can see what it did
-          }
+          // Thinking block stays finalized even if no agent text followed
         }
 
         // Finalize streaming agent message
@@ -520,8 +553,12 @@ export default function LiveSessionView({
   }, [previewUrl]);
 
   // ── Image attachment ─────────────────────────────────────────────────────
+  const MAX_IMAGES = 10;
+
   const attachFiles = useCallback(async (files: FileList | File[]) => {
     const arr = Array.from(files).filter(isImageFile);
+    if (arr.length === 0) return;
+
     const loaded: AttachedImage[] = await Promise.all(
       arr.map(async (f) => ({
         id: `img-${Date.now()}-${Math.random()}`,
@@ -529,7 +566,12 @@ export default function LiveSessionView({
         dataUrl: await readFileAsThumbnail(f),
       })),
     );
-    setAttachedImages((prev) => [...prev, ...loaded]);
+    setAttachedImages((prev) => {
+      const slotsLeft = MAX_IMAGES - prev.length;
+      if (slotsLeft <= 0) return prev;
+      return [...prev, ...loaded.slice(0, slotsLeft)];
+    });
+    textareaRef.current?.focus();
   }, []);
 
   const removeImage = (id: string) => {
@@ -708,29 +750,12 @@ export default function LiveSessionView({
         </button>
       </div>
 
-      {/* Pinned last user message */}
-      {lastUserMsg && (
-        <div
-          className="shrink-0 px-6 py-2.5 border-b"
-          style={{
-            background: "var(--bg-surface)",
-            borderColor: "var(--border-default)",
-          }}
-        >
-          <div className="flex items-start gap-2 max-w-2xl">
-            <User size={13} className="mt-0.5 shrink-0" style={{ color: "var(--text-tertiary)" }} />
-            <p
-              className="text-[13px] leading-snug line-clamp-2"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              {lastUserMsg.text}
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Message list */}
-      <div ref={chatContainerRef} className="flex-1 min-h-0 overflow-y-auto">
+      <div
+        ref={chatContainerRef}
+        className="flex-1 min-h-0 overflow-y-auto"
+        style={{ background: "var(--bg-surface)" }}
+      >
         <div className="max-w-2xl mx-auto px-6 py-4 space-y-4">
           {messages.length === 0 && (
             <div
@@ -828,6 +853,15 @@ export default function LiveSessionView({
             return null;
           })}
 
+          {/* Typing indicator: shows when waiting for agent and no active thinking/streaming */}
+          {!canSend && !sessionEnded && messages.length > 0 && (() => {
+            const last = messages[messages.length - 1];
+            const hasActiveThinking = last?.role === "thinking" && last.durationMs == null;
+            const hasActiveStreaming = last?.role === "agent" && last.isStreaming;
+            if (hasActiveThinking || hasActiveStreaming) return null;
+            return <TypingIndicator />;
+          })()}
+
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -849,8 +883,9 @@ export default function LiveSessionView({
           <div
             className="flex flex-col rounded-xl overflow-hidden"
             style={{
-              background: "var(--bg-inset)",
-              border: `1px solid ${isDragging ? "var(--accent)" : "var(--border-default)"}`,
+              background: "var(--bg-surface)",
+              border: `1.5px solid ${isDragging ? "var(--accent)" : "var(--border-default)"}`,
+              boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
               transition: "border-color 150ms",
             }}
           >
@@ -897,7 +932,8 @@ export default function LiveSessionView({
               style={{
                 color: "var(--text-primary)",
                 minHeight: 36,
-                maxHeight: 200,
+                maxHeight: maxTextareaHeight,
+                overflowY: "hidden",
                 opacity: !canSend || sessionEnded ? 0.5 : 1,
               }}
             />
@@ -913,7 +949,7 @@ export default function LiveSessionView({
                 title="Attach image"
                 onMouseEnter={(e) => {
                   e.currentTarget.style.color = "var(--text-secondary)";
-                  e.currentTarget.style.background = "var(--bg-surface)";
+                  e.currentTarget.style.background = "var(--bg-hover)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = "var(--text-tertiary)";
