@@ -8,6 +8,7 @@ mod heartbeat;
 mod work_session;
 mod event_translator;
 mod commands;
+mod daily_report;
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -208,6 +209,28 @@ pub fn run() {
             commands::repair_workspace,
             commands::read_artifacts_manifest,
             commands::read_tools_manifest,
+            commands::generate_daily_report,
+            commands::get_daily_reports,
+            commands::clone_agent,
+            commands::clear_agent_sessions,
+            commands::get_db_size,
+            commands::get_integrations,
+            commands::save_integration,
+            commands::remove_integration,
+            commands::get_claude_version_cmd,
+            commands::update_daily_budget,
+            commands::get_spend_breakdown,
+            commands::git_create_branch,
+            commands::git_get_status,
+            commands::git_get_diff,
+            commands::git_rollback,
+            commands::git_undo_last_session,
+            commands::get_task_board,
+            commands::move_task,
+            commands::get_schedule,
+            commands::save_schedule_entry,
+            commands::delete_schedule_entry,
+            commands::toggle_schedule_entry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -263,6 +286,32 @@ async fn run_heartbeat_tick(
         Ok(agent) => agent,
         Err(_) => return,
     };
+
+    if agent.daily_budget_usd > 0.0 {
+        if let Ok(daily_spend) = db.get_daily_spend(&agent_uuid) {
+            if daily_spend >= agent.daily_budget_usd {
+                let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Paused);
+                heartbeat.stop_agent_heartbeat(&agent_id);
+                let _ = app_handle.emit("budget-exceeded", serde_json::json!({
+                    "agent_id": agent_id,
+                    "agent_name": agent.name,
+                    "daily_spend": daily_spend,
+                    "budget": agent.daily_budget_usd,
+                }));
+                return;
+            }
+        }
+    }
+
+    if daily_report::is_report_hour() && daily_report::should_generate_report(&agent) {
+        if let Ok(report) = daily_report::build_report(&agent, &db) {
+            let _ = app_handle.emit("daily-report-ready", serde_json::json!({
+                "agent_id": agent_id,
+                "agent_name": agent.name,
+                "preview": report.lines().take(5).collect::<Vec<_>>().join("\n"),
+            }));
+        }
+    }
 
     match agent.status {
         models::AgentStatus::Running => {}
@@ -352,18 +401,37 @@ async fn run_heartbeat_tick(
                 models::SessionOutcome::Completed | models::SessionOutcome::Timeout => {
                     let _ = db.reset_consecutive_errors(&agent_uuid);
 
-                    if let Some(interval_secs) = requested_interval {
-                        let clamped = interval_secs.max(60).min(86400);
-                        heartbeat.update_interval(&agent_id, clamped, app_handle.clone());
-                        let _ = app_handle.emit("agent-output", serde_json::json!({
-                            "agent_id": agent_id,
-                            "type": "tempo_change",
-                            "interval_secs": clamped,
-                            "message": format!("Co-founder set next check-in to {}",
-                                if clamped >= 3600 { format!("{}h", clamped / 3600) }
-                                else { format!("{}m", clamped / 60) }),
-                        }));
+                    let base = agent.checkin_interval_secs;
+                    let was_noop = log.summary == "Nothing to do";
+
+                    let effective_interval = if was_noop {
+                        base
+                    } else if let Some(req) = requested_interval {
+                        req.clamp(60, 86400)
+                    } else {
+                        base
+                    };
+
+                    if effective_interval != base || requested_interval.is_some() {
+                        heartbeat.update_interval(&agent_id, effective_interval, app_handle.clone());
+                        let _ = db.update_checkin_interval(&agent_uuid, effective_interval);
                     }
+
+                    let _ = app_handle.emit("agent-output", serde_json::json!({
+                        "agent_id": agent_id,
+                        "type": "tempo_change",
+                        "interval_secs": effective_interval,
+                        "was_noop": was_noop,
+                        "message": if was_noop {
+                            format!("Nothing to do — checking back in {}",
+                                if effective_interval >= 3600 { format!("{}h", effective_interval / 3600) }
+                                else { format!("{}m", effective_interval / 60) })
+                        } else {
+                            format!("Co-founder set next check-in to {}",
+                                if effective_interval >= 3600 { format!("{}h", effective_interval / 3600) }
+                                else { format!("{}m", effective_interval / 60) })
+                        },
+                    }));
                 }
             }
             let _ = app_handle.emit("session-completed", &log);

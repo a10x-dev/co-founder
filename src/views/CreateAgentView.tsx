@@ -3,6 +3,8 @@ import { Package, Globe, Smartphone, ShoppingCart } from "lucide-react";
 import type { CreateAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { createAgent } from "@/lib/api";
+import FriendlyError from "@/components/FriendlyError";
+import { extractError } from "@/lib/friendlyErrors";
 
 const STEPS = ["Idea", "Personality", "Schedule"] as const;
 
@@ -72,7 +74,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
       await createAgent(req);
       onCreated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
+      setError(extractError(e));
     } finally {
       setIsSubmitting(false);
     }
@@ -170,7 +172,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="mt-2"
                   style={{ fontSize: 15, color: "var(--text-secondary)" }}
                 >
-                  Describe your idea in a few sentences. Your agent will figure out
+                  Describe your idea in a few sentences. Your co-founder will figure out
                   the rest.
                 </p>
               </div>
@@ -272,7 +274,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="font-semibold"
                   style={{ fontSize: 28, color: "var(--text-primary)" }}
                 >
-                  How should your agent work?
+                  How should your co-founder work?
                 </h1>
                 <p
                   className="mt-2"
@@ -351,7 +353,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="mt-2"
                   style={{ fontSize: 15, color: "var(--text-secondary)" }}
                 >
-                  Set up how your agent checks in and makes decisions.
+                  Set up how your co-founder checks in and makes decisions.
                 </p>
               </div>
 
@@ -360,7 +362,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="block mb-2 font-medium"
                   style={{ fontSize: 15, color: "var(--text-primary)" }}
                 >
-                  How often should your agent check in?
+                  How often should your co-founder check in?
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {CHECKIN_OPTIONS.map((opt) => {
@@ -409,7 +411,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="block mb-2 font-medium"
                   style={{ fontSize: 15, color: "var(--text-primary)" }}
                 >
-                  How should your agent make decisions?
+                  How should your co-founder make decisions?
                 </label>
                 <div className="flex gap-2">
                   {AUTONOMY_OPTIONS.map((opt) => {
@@ -520,9 +522,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
         </div>
         {error && (
           <div className="w-full max-w-[520px] mx-auto px-6 pb-3">
-            <p className="text-[13px]" style={{ color: "var(--status-error)" }}>
-              {error}
-            </p>
+            <FriendlyError error={error} />
           </div>
         )}
       </div>

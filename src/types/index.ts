@@ -21,6 +21,7 @@ export interface Agent {
   checkin_interval_secs: number;
   consecutive_errors: number;
   last_error_at: string | null;
+  daily_budget_usd: number;
 }
 
 export interface CreateAgentRequest {
@@ -51,6 +52,9 @@ export interface WorkSessionLog {
   outcome: SessionOutcome;
   summary: string;
   events_json: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
 }
 
 export interface GlobalSettings {
@@ -100,4 +104,52 @@ export interface ToolManifestEntry {
   use_count: number;
   created_at: string;
   approved: boolean;
+}
+
+export interface GitStatus {
+  is_repo: boolean;
+  branch?: string;
+  head?: string;
+  changes?: { status: string; file: string }[];
+  changed_files?: number;
+}
+
+export interface TaskColumn {
+  column: string;
+  tasks: string[];
+}
+
+export interface TaskBoard {
+  columns: TaskColumn[];
+}
+
+export interface SpendBreakdown {
+  daily: number;
+  weekly: number;
+  monthly: number;
+  total: number;
+}
+
+export type ScheduleEntrySource = "user" | "cofounder";
+export type ScheduleRecurrence = "once" | "daily" | "weekdays" | "weekly";
+
+export interface ScheduleEntry {
+  id: string;
+  time: string; // HH:mm
+  action: string;
+  recurrence: ScheduleRecurrence;
+  source: ScheduleEntrySource;
+  enabled: boolean;
+  last_run?: string;
+  day_of_week?: number; // 0=Sun for "weekly"
+}
+
+export interface McpServerConfig {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
+
+export interface McpJson {
+  mcpServers: Record<string, McpServerConfig>;
 }

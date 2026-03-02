@@ -23,7 +23,7 @@ export const defaultMissionMd = (mission: string) => `# Mission
 ${mission}
 
 # Objectives
-The agent will break this down into concrete objectives during its first work session.
+Your co-founder will break this down into concrete objectives during the first work session.
 
 # Success Criteria
 - Working, deployable product
@@ -32,7 +32,7 @@ The agent will break this down into concrete objectives during its first work se
 `;
 
 export const defaultJournalMd = `# Journal
-This file is maintained by the agent. Each work session appends an entry below.
+Each work session appends an entry below.
 
 ---
 `;

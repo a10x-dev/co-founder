@@ -76,6 +76,9 @@ impl Database {
 
         Self::migrate_add_reliability_columns(&conn)?;
         Self::migrate_add_env_vars_table(&conn)?;
+        Self::migrate_add_active_hours(&conn)?;
+        Self::migrate_add_cost_tracking(&conn)?;
+        Self::migrate_add_budget_and_teams(&conn)?;
 
         Ok(())
     }
@@ -96,6 +99,61 @@ impl Database {
         Ok(())
     }
 
+    fn migrate_add_cost_tracking(conn: &Connection) -> Result<(), String> {
+        let has_col: bool = conn
+            .prepare("SELECT input_tokens FROM work_sessions LIMIT 0")
+            .is_ok();
+        if !has_col {
+            conn.execute_batch(
+                "ALTER TABLE work_sessions ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE work_sessions ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE work_sessions ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0.0;",
+            )
+            .map_err(|e| format!("Cost tracking migration failed: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_add_active_hours(conn: &Connection) -> Result<(), String> {
+        let has_col: bool = conn
+            .prepare("SELECT active_hours_enabled FROM agents LIMIT 0")
+            .is_ok();
+        if !has_col {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN active_hours_enabled INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE agents ADD COLUMN active_hours_start INTEGER NOT NULL DEFAULT 9;
+                 ALTER TABLE agents ADD COLUMN active_hours_end INTEGER NOT NULL DEFAULT 22;",
+            )
+            .map_err(|e| format!("Active hours migration failed: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_add_budget_and_teams(conn: &Connection) -> Result<(), String> {
+        let has_budget: bool = conn
+            .prepare("SELECT daily_budget_usd FROM agents LIMIT 0")
+            .is_ok();
+        if !has_budget {
+            conn.execute_batch(
+                "ALTER TABLE agents ADD COLUMN daily_budget_usd REAL NOT NULL DEFAULT 0.0;
+                 ALTER TABLE agents ADD COLUMN team_id TEXT;",
+            )
+            .map_err(|e| format!("Budget/teams migration failed: {e}"))?;
+        }
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS teams (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );",
+        )
+        .map_err(|e| format!("Teams table migration failed: {e}"))?;
+
+        Ok(())
+    }
+
     fn migrate_add_reliability_columns(conn: &Connection) -> Result<(), String> {
         let has_col: bool = conn
             .prepare("SELECT consecutive_errors FROM agents LIMIT 0")
@@ -113,7 +171,7 @@ impl Database {
     pub fn get_agents(&self) -> Result<Vec<Agent>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare("SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at FROM agents ORDER BY created_at DESC")
+            .prepare("SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at, daily_budget_usd FROM agents ORDER BY created_at DESC")
             .map_err(|e| format!("Query error: {e}"))?;
 
         let agents = stmt
@@ -136,6 +194,7 @@ impl Database {
                     checkin_interval_secs: row.get::<_, i64>(14)? as u64,
                     consecutive_errors: row.get::<_, i32>(15)? as u32,
                     last_error_at: row.get(16)?,
+                    daily_budget_usd: row.get::<_, f64>(17).unwrap_or(0.0),
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?
@@ -148,7 +207,7 @@ impl Database {
     pub fn get_agent(&self, id: &Uuid) -> Result<Agent, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.query_row(
-            "SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at FROM agents WHERE id = ?1",
+            "SELECT id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at, daily_budget_usd FROM agents WHERE id = ?1",
             params![id.to_string()],
             |row| {
                 Ok(Agent {
@@ -169,6 +228,7 @@ impl Database {
                     checkin_interval_secs: row.get::<_, i64>(14)? as u64,
                     consecutive_errors: row.get::<_, i32>(15)? as u32,
                     last_error_at: row.get(16)?,
+                    daily_budget_usd: row.get::<_, f64>(17).unwrap_or(0.0),
                 })
             },
         )
@@ -178,7 +238,7 @@ impl Database {
     pub fn create_agent(&self, agent: &Agent) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(
-            "INSERT INTO agents (id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            "INSERT INTO agents (id, name, workspace, soul_path, mission, autonomy_level, allowed_tools, status, current_session_id, max_session_duration_secs, created_at, last_heartbeat_at, total_sessions, personality, checkin_interval_secs, consecutive_errors, last_error_at, daily_budget_usd) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
             params![
                 agent.id.to_string(),
                 agent.name,
@@ -197,6 +257,7 @@ impl Database {
                 agent.checkin_interval_secs as i64,
                 agent.consecutive_errors as i32,
                 agent.last_error_at,
+                agent.daily_budget_usd,
             ],
         )
         .map_err(|e| format!("Insert error: {e}"))?;
@@ -220,6 +281,16 @@ impl Database {
             params![level.to_string(), id.to_string()],
         )
         .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn update_checkin_interval(&self, id: &Uuid, interval_secs: u64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET checkin_interval_secs = ?1 WHERE id = ?2",
+            params![interval_secs as i64, id.to_string()],
+        )
+        .map_err(|e| format!("Update interval error: {e}"))?;
         Ok(())
     }
 
@@ -273,7 +344,7 @@ impl Database {
     pub fn get_work_sessions(&self, agent_id: &Uuid) -> Result<Vec<WorkSessionLog>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 50")
+            .prepare("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 50")
             .map_err(|e| format!("Query error: {e}"))?;
 
         let sessions = stmt
@@ -289,6 +360,9 @@ impl Database {
                     outcome: SessionOutcome::from_str(&row.get::<_, String>(7)?),
                     summary: row.get(8)?,
                     events_json: row.get(9)?,
+                    input_tokens: row.get::<_, i64>(10)? as u64,
+                    output_tokens: row.get::<_, i64>(11)? as u64,
+                    cost_usd: row.get(12)?,
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?
@@ -301,7 +375,7 @@ impl Database {
     pub fn log_work_session(&self, log: &WorkSessionLog) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(
-            "INSERT INTO work_sessions (id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO work_sessions (id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 log.id.to_string(),
                 log.agent_id.to_string(),
@@ -313,6 +387,9 @@ impl Database {
                 log.outcome.to_string(),
                 log.summary,
                 log.events_json,
+                log.input_tokens as i64,
+                log.output_tokens as i64,
+                log.cost_usd,
             ],
         )
         .map_err(|e| format!("Insert session error: {e}"))?;
@@ -323,6 +400,12 @@ impl Database {
             params![log.agent_id.to_string()],
         )
         .map_err(|e| format!("Update sessions count error: {e}"))?;
+
+        // Auto-purge: keep at most 200 sessions per agent
+        let _ = conn.execute(
+            "DELETE FROM work_sessions WHERE agent_id = ?1 AND id NOT IN (SELECT id FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 200)",
+            params![log.agent_id.to_string()],
+        );
 
         Ok(())
     }
@@ -395,6 +478,106 @@ impl Database {
             },
         )
         .map_err(|e| format!("Settings not found: {e}"))
+    }
+
+    pub fn purge_old_sessions(&self, agent_id: &Uuid, keep: usize) -> Result<u64, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM work_sessions WHERE agent_id = ?1",
+            params![agent_id.to_string()],
+            |row| row.get(0),
+        ).map_err(|e| format!("Count error: {e}"))?;
+
+        if count as usize <= keep {
+            return Ok(0);
+        }
+
+        let deleted = conn.execute(
+            "DELETE FROM work_sessions WHERE agent_id = ?1 AND id NOT IN (SELECT id FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT ?2)",
+            params![agent_id.to_string(), keep as i64],
+        ).map_err(|e| format!("Purge error: {e}"))? as u64;
+
+        Ok(deleted)
+    }
+
+    pub fn clear_agent_sessions(&self, agent_id: &Uuid) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "DELETE FROM work_sessions WHERE agent_id = ?1",
+            params![agent_id.to_string()],
+        ).map_err(|e| format!("Clear sessions error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET total_sessions = 0 WHERE id = ?1",
+            params![agent_id.to_string()],
+        ).map_err(|e| format!("Reset count error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_db_size_bytes(&self) -> Result<u64, String> {
+        let data_dir = dirs_data_dir().ok_or("Cannot determine home directory")?;
+        let db_path = format!("{}/data.db", data_dir);
+        let metadata = std::fs::metadata(&db_path).map_err(|e| format!("Metadata error: {e}"))?;
+        Ok(metadata.len())
+    }
+
+    pub fn get_daily_spend(&self, agent_id: &Uuid) -> Result<f64, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let spend: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
+            params![agent_id.to_string(), format!("{}T00:00:00", today)],
+            |row| row.get(0),
+        ).map_err(|e| format!("Spend query error: {e}"))?;
+        Ok(spend)
+    }
+
+    pub fn get_spend_breakdown(&self, agent_id: &Uuid) -> Result<serde_json::Value, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let now = chrono::Utc::now();
+        let today = now.format("%Y-%m-%dT00:00:00").to_string();
+        let week_ago = (now - chrono::Duration::days(7)).format("%Y-%m-%dT00:00:00").to_string();
+        let month_ago = (now - chrono::Duration::days(30)).format("%Y-%m-%dT00:00:00").to_string();
+
+        let daily: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
+            params![agent_id.to_string(), today],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let weekly: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
+            params![agent_id.to_string(), week_ago],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let monthly: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
+            params![agent_id.to_string(), month_ago],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        let total: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1",
+            params![agent_id.to_string()],
+            |row| row.get(0),
+        ).unwrap_or(0.0);
+
+        Ok(serde_json::json!({
+            "daily": (daily * 100.0).round() / 100.0,
+            "weekly": (weekly * 100.0).round() / 100.0,
+            "monthly": (monthly * 100.0).round() / 100.0,
+            "total": (total * 100.0).round() / 100.0,
+        }))
+    }
+
+    pub fn update_daily_budget(&self, id: &Uuid, budget: f64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET daily_budget_usd = ?1 WHERE id = ?2",
+            params![budget, id.to_string()],
+        )
+        .map_err(|e| format!("Update budget error: {e}"))?;
+        Ok(())
     }
 
     pub fn update_global_settings(&self, settings: &GlobalSettings) -> Result<(), String> {

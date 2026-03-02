@@ -81,6 +81,11 @@ impl StateManager {
         fs::read_to_string(&path).unwrap_or_default()
     }
 
+    pub fn read_mission(workspace: &str) -> String {
+        let path = format!("{}/.founder/MISSION.md", workspace);
+        fs::read_to_string(&path).unwrap_or_default()
+    }
+
     pub fn read_inbox(workspace: &str) -> String {
         let path = format!("{}/.founder/INBOX.md", workspace);
         fs::read_to_string(&path).unwrap_or_default()
@@ -89,6 +94,16 @@ impl StateManager {
     pub fn read_tasks(workspace: &str) -> String {
         let path = format!("{}/.founder/TASKS.md", workspace);
         fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    pub fn read_schedule(workspace: &str) -> String {
+        let path = format!("{}/.founder/SCHEDULE.md", workspace);
+        fs::read_to_string(&path).unwrap_or_default()
+    }
+
+    pub fn write_schedule(workspace: &str, content: &str) -> Result<(), String> {
+        let path = format!("{}/.founder/SCHEDULE.md", workspace);
+        fs::write(&path, content).map_err(|e| format!("Write schedule error: {e}"))
     }
 
     pub fn get_soul_content(workspace: &str, personality: &str) -> String {
@@ -117,6 +132,7 @@ fn workspace_templates(name: &str, personality: &str, mission: &str) -> Vec<(&'s
         ("MEMORY.md", default_memory_template()),
         ("INBOX.md", default_inbox_template()),
         ("TASKS.md", default_tasks_template()),
+        ("SCHEDULE.md", default_schedule_template()),
         ("artifacts/manifest.json", default_artifacts_manifest()),
         ("tools/manifest.json", default_tools_manifest()),
     ]
@@ -154,7 +170,7 @@ impl StateManager {
 
         let required_files = [
             "SOUL.md", "MISSION.md", "STATE.md", "HEARTBEAT.md",
-            "JOURNAL.md", "MEMORY.md", "INBOX.md", "TASKS.md",
+            "JOURNAL.md", "MEMORY.md", "INBOX.md", "TASKS.md", "SCHEDULE.md",
         ];
 
         let missing: Vec<String> = required_files
@@ -243,12 +259,14 @@ Your working style: methodical, thorough, quality-obsessed. You build things tha
 - When blocked, find a way around — founders don't wait
 - Update MEMORY.md with every important decision or learning
 - Update TASKS.md with your own priorities — you set the agenda
+- Check and respect SCHEDULE.md — your daily agenda with timed commitments
 
 ## Your Operating Rhythm
 - Short sessions: execute on the highest-priority task
 - Strategic reviews (every ~24h): step back, assess progress, adjust strategy
 - You control your own tempo via NEXT_CHECKIN directives
 - If you need to grind, request 5m check-ins. If stable, request 4h.
+- You can schedule your own recurring tasks in SCHEDULE.md
 "#.to_string(),
         "explore_creatively" => r#"# Soul — Co-Founder DNA
 
@@ -265,12 +283,14 @@ Your working style: creative, experimental, willing to break things. Innovation 
 - When blocked, find a creative way around — founders don't wait
 - Update MEMORY.md with every important decision or learning
 - Update TASKS.md with your own priorities — you set the agenda
+- Check and respect SCHEDULE.md — your daily agenda with timed commitments
 
 ## Your Operating Rhythm
 - Short sessions: execute on the highest-priority task
 - Strategic reviews (every ~24h): step back, assess progress, adjust strategy
 - You control your own tempo via NEXT_CHECKIN directives
 - If you need to grind, request 5m check-ins. If stable, request 4h.
+- You can schedule your own recurring tasks in SCHEDULE.md
 "#.to_string(),
         _ => r#"# Soul — Co-Founder DNA
 
@@ -287,12 +307,14 @@ Your working style: move fast, ship first, iterate second. Bias toward action al
 - When blocked, find a way around — founders don't wait
 - Update MEMORY.md with every important decision or learning
 - Update TASKS.md with your own priorities — you set the agenda
+- Check and respect SCHEDULE.md — your daily agenda with timed commitments
 
 ## Your Operating Rhythm
 - Short sessions: execute on the highest-priority task
 - Strategic reviews (every ~24h): step back, assess progress, adjust strategy
 - You control your own tempo via NEXT_CHECKIN directives
 - If you need to grind, request 5m check-ins. If stable, request 4h.
+- You can schedule your own recurring tasks in SCHEDULE.md
 "#.to_string(),
     }
 }
@@ -356,10 +378,11 @@ fn default_heartbeat_template() -> String {
 ## Check-in Protocol
 1. Read STATE.md — where am I?
 2. Read MISSION.md — where do I need to be?
-3. Read TASKS.md — what's the plan?
-4. Decide: what's the highest-impact action right now?
-5. Execute immediately
-6. At the end, set NEXT_CHECKIN based on urgency
+3. Check SCHEDULE.md — any timed commitments due now?
+4. Read TASKS.md — what's the plan?
+5. Decide: what's the highest-impact action right now? (Schedule items take priority when due)
+6. Execute immediately
+7. At the end, set NEXT_CHECKIN based on urgency
 
 ## Response Format
 - If genuinely nothing to do: `HEARTBEAT_OK`
@@ -431,6 +454,21 @@ fn default_tasks_template() -> String {
 
 
 ## Blocked
+
+"#
+    .to_string()
+}
+
+fn default_schedule_template() -> String {
+    r#"# Schedule
+
+Your daily agenda. Both you and your human partner can add entries here.
+Items marked `[user]` were scheduled by your partner — treat them as commitments.
+Items marked `[cofounder]` were scheduled by you — adjust as needed.
+
+Format: `- HH:MM | action description | recurrence | source | enabled`
+
+## Entries
 
 "#
     .to_string()

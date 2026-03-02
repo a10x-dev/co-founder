@@ -139,6 +139,7 @@ pub struct Agent {
     pub checkin_interval_secs: u64,
     pub consecutive_errors: u32,
     pub last_error_at: Option<String>,
+    pub daily_budget_usd: f64,
 }
 
 pub const MAX_CONSECUTIVE_ERRORS: u32 = 5;
@@ -155,8 +156,6 @@ pub struct AgentEnvVar {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeartbeatConfig {
     pub every_secs: u64,
-    pub active_hours_start: Option<String>,
-    pub active_hours_end: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,6 +170,9 @@ pub struct WorkSessionLog {
     pub outcome: SessionOutcome,
     pub summary: String,
     pub events_json: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

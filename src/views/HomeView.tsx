@@ -118,10 +118,10 @@ export default function HomeView({
             <Plus size={28} strokeWidth={1.5} style={{ color: "var(--text-tertiary)" }} />
           </div>
           <h2 className="text-[22px] font-semibold mb-2" style={{ color: "var(--text-primary)" }}>
-            No agents yet
+            No co-founders yet
           </h2>
           <p className="text-[15px] mb-8 text-center" style={{ color: "var(--text-secondary)" }}>
-            Create your first agent to get started
+            Create your first co-founder to get started
           </p>
           <div className="flex gap-3">
             <button
@@ -132,7 +132,7 @@ export default function HomeView({
               onMouseLeave={(e) => { e.currentTarget.style.background = "var(--accent)"; }}
             >
               <Plus size={18} strokeWidth={2} />
-              Create Agent
+              Create Co-Founder
             </button>
             <button
               onClick={onImportAgent}
@@ -313,7 +313,7 @@ export default function HomeView({
           >
             <Plus size={24} strokeWidth={1.5} className="mb-2" style={{ color: "var(--text-tertiary)" }} />
             <span className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>
-              New agent
+              New co-founder
             </span>
           </button>
           <button

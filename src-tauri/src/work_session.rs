@@ -27,11 +27,33 @@ impl WorkSessionEngine {
         let session_uuid = Uuid::new_v4();
         let started_at = Utc::now().to_rfc3339();
 
+        // Auto-commit any pending changes before session starts (for rollback safety)
+        let is_git_repo = std::process::Command::new("git")
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(&agent.workspace)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if is_git_repo {
+            let _ = std::process::Command::new("git")
+                .args(["add", "-A"])
+                .current_dir(&agent.workspace)
+                .output();
+            let _ = std::process::Command::new("git")
+                .args(["commit", "-m", &format!("pre-session snapshot {}", &session_uuid.to_string()[..8]), "--allow-empty"])
+                .current_dir(&agent.workspace)
+                .output();
+        }
+
         let soul_content = StateManager::get_soul_content(&agent.workspace, &agent.personality);
+        let mission_file = StateManager::read_mission(&agent.workspace);
+        let mission_content = if mission_file.trim().is_empty() { &agent.mission } else { &mission_file };
         let state_content = StateManager::read_state(&agent.workspace);
         let memory_content = StateManager::read_memory(&agent.workspace);
         let inbox_content = StateManager::read_inbox(&agent.workspace);
         let tasks_content = StateManager::read_tasks(&agent.workspace);
+        let schedule_content = StateManager::read_schedule(&agent.workspace);
         let artifacts_summary = StateManager::read_artifacts_summary(&agent.workspace);
         let tools_summary = StateManager::read_tools_summary(&agent.workspace);
         let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
@@ -66,8 +88,9 @@ impl WorkSessionEngine {
                  3. Analyze results — what worked, what didn't?\n\
                  4. Decide priorities for the next cycle\n\
                  5. Update your TASKS.md with revised priorities\n\
-                 6. Update artifacts with current metrics\n\
-                 7. Begin executing on your top priority\n\n\
+                 6. Review and update your SCHEDULE.md — add recurring tasks you need\n\
+                 7. Update artifacts with current metrics\n\
+                 8. Begin executing on your top priority\n\n\
                  Think like a CEO doing a daily standup with yourself.",
                 age_days, age_hours, agent.total_sessions, hours_since_last_session
             ));
@@ -79,13 +102,53 @@ impl WorkSessionEngine {
             ));
         }
 
-        prompt_parts.push(format!("\n## Your Mission\n{}", agent.mission));
+        prompt_parts.push(format!("\n## Your Mission\n{}", mission_content));
         prompt_parts.push(format!("\n## Current State\n{}", state_content));
 
         if !tasks_content.trim().is_empty()
             && tasks_content.trim() != default_empty_tasks()
         {
             prompt_parts.push(format!("\n## Tasks\n{}", tasks_content));
+        }
+
+        if !schedule_content.trim().is_empty() {
+            let local_now = chrono::Local::now();
+            let current_time = local_now.format("%H:%M").to_string();
+            let current_day = local_now.format("%A").to_string();
+
+            let mut due_items = Vec::new();
+            let mut upcoming_items = Vec::new();
+            for line in schedule_content.lines() {
+                let trimmed = line.trim();
+                if !trimmed.starts_with("- ") { continue; }
+                let parts: Vec<&str> = trimmed[2..].split('|').map(|s| s.trim()).collect();
+                if parts.len() < 5 { continue; }
+                if parts.len() > 4 && parts[4] == "false" { continue; }
+                let entry_time = parts[0];
+                let action = parts[1];
+                if entry_time <= current_time.as_str() {
+                    due_items.push(format!("- **{}** — {} (DUE NOW)", entry_time, action));
+                } else {
+                    upcoming_items.push(format!("- {} — {}", entry_time, action));
+                }
+            }
+
+            let mut schedule_section = format!("\n## Today's Schedule ({})\nCurrent time: {}\n", current_day, current_time);
+            if !due_items.is_empty() {
+                schedule_section.push_str("\n### Due / Overdue\n");
+                schedule_section.push_str(&due_items.join("\n"));
+                schedule_section.push('\n');
+            }
+            if !upcoming_items.is_empty() {
+                schedule_section.push_str("\n### Coming Up\n");
+                schedule_section.push_str(&upcoming_items.join("\n"));
+                schedule_section.push('\n');
+            }
+            if !due_items.is_empty() {
+                schedule_section.push_str("\nIMPORTANT: Handle DUE items before regular tasks. They are commitments.\n");
+            }
+            schedule_section.push_str("\nYou can add your own schedule entries by writing to `.founder/SCHEDULE.md`.\nFormat: `- HH:MM | action | recurrence | cofounder | true`\n");
+            prompt_parts.push(schedule_section);
         }
 
         if !artifacts_summary.is_empty() {
@@ -121,7 +184,7 @@ impl WorkSessionEngine {
             );
         } else {
             prompt_parts.push(
-                "\nIf there is genuinely nothing to do right now, respond with exactly: HEARTBEAT_OK\nIf there is ANY work you can do to advance the mission, describe your plan and begin.".to_string()
+                "\nBefore responding HEARTBEAT_OK, ask yourself: is there ANYTHING I could build, improve, refactor, test, document, or optimize? Check TASKS.md, SCHEDULE.md, and your MISSION. A great co-founder always finds leverage. Only if you've genuinely exhausted every angle, respond with exactly: HEARTBEAT_OK".to_string()
             );
         }
 
@@ -133,13 +196,12 @@ impl WorkSessionEngine {
 ## Scheduling — You Control Your Own Tempo
 
 At the END of your response, you MUST include a scheduling directive:
-- `NEXT_CHECKIN: 5m` — if you're actively working and need to continue soon
-- `NEXT_CHECKIN: 15m` — if you just finished a chunk and want a short break
-- `NEXT_CHECKIN: 1h` — if you're waiting for something or need time to pass
-- `NEXT_CHECKIN: 4h` — if things are stable, just periodic monitoring
-- `NEXT_CHECKIN: 8h` — if you're blocked on external input
+- `NEXT_CHECKIN: 5m` — you're mid-task and need to continue immediately
+- `NEXT_CHECKIN: 15m` — you just shipped something, quick breather then back at it
+- `NEXT_CHECKIN: 30m` — you finished a chunk, regroup and look for next opportunity
+- `NEXT_CHECKIN: 1h` — genuinely nothing actionable right now
 
-Choose based on urgency. A founder grinding on launch day uses 5m. A founder waiting for user feedback uses 4h. You decide."#.to_string());
+Bias toward ACTION. A great co-founder always finds the next thing to build, fix, or improve. Only use 1h if you've exhausted every possible avenue. Default to 15m."#.to_string());
 
         prompt_parts.push(r#"
 ## Artifacts & Tools (use these to track your progress)
@@ -196,6 +258,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     outcome,
                     summary: format!("Failed to start session: {turn_err}"),
                     events_json: "[]".to_string(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
                 };
                 db.log_work_session(&log)?;
                 return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
@@ -210,6 +275,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
 
         if text_output.contains("HEARTBEAT_OK") {
             let requested = parse_next_checkin(&text_output);
+            let (it, ot, cost) = parse_token_usage(&all_events);
             let log = WorkSessionLog {
                 id: session_uuid,
                 agent_id: agent.id,
@@ -221,6 +287,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 outcome: SessionOutcome::Completed,
                 summary: "Nothing to do".to_string(),
                 events_json: serialize_events(&all_events),
+                input_tokens: it,
+                output_tokens: ot,
+                cost_usd: cost,
             };
             db.log_work_session(&log)?;
             return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
@@ -240,6 +309,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
 
             if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
                 let requested = parse_next_checkin(&all_text);
+                let (it, ot, cost) = parse_token_usage(&all_events);
                 let log = WorkSessionLog {
                     id: session_uuid,
                     agent_id: agent.id,
@@ -251,6 +321,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     outcome: SessionOutcome::Timeout,
                     summary: "Session timed out".to_string(),
                     events_json: serialize_events(&all_events),
+                    input_tokens: it,
+                    output_tokens: ot,
+                    cost_usd: cost,
                 };
                 db.log_work_session(&log)?;
                 return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
@@ -287,6 +360,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     }
                     if output_lower.contains("blocked") || output_lower.contains("stuck") || output_lower.contains("cannot proceed") {
                         let requested = parse_next_checkin(&all_text);
+                        let (it, ot, cost) = parse_token_usage(&all_events);
                         let log = WorkSessionLog {
                             id: session_uuid,
                             agent_id: agent.id,
@@ -298,6 +372,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                             outcome: SessionOutcome::Blocked,
                             summary: truncate(&turn_result.text_output, 500),
                             events_json: serialize_events(&all_events),
+                            input_tokens: it,
+                            output_tokens: ot,
+                            cost_usd: cost,
                         };
                         db.log_work_session(&log)?;
                         return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
@@ -308,6 +385,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         TurnError::RateLimited(_) => (SessionOutcome::RateLimited, true),
                         _ => (SessionOutcome::Error, false),
                     };
+                    let (it, ot, cost) = parse_token_usage(&all_events);
                     let log = WorkSessionLog {
                         id: session_uuid,
                         agent_id: agent.id,
@@ -319,6 +397,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         outcome,
                         summary: format!("Error during turn: {turn_err}"),
                         events_json: serialize_events(&all_events),
+                        input_tokens: it,
+                        output_tokens: ot,
+                        cost_usd: cost,
                     };
                     db.log_work_session(&log)?;
                     return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
@@ -327,6 +408,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         }
 
         let requested = parse_next_checkin(&all_text);
+        let (it, ot, cost) = parse_token_usage(&all_events);
         let log = WorkSessionLog {
             id: session_uuid,
             agent_id: agent.id,
@@ -338,6 +420,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             outcome: SessionOutcome::Completed,
             summary: "Work session completed".to_string(),
             events_json: serialize_events(&all_events),
+            input_tokens: it,
+            output_tokens: ot,
+            cost_usd: cost,
         };
         db.log_work_session(&log)?;
         Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested })
@@ -363,6 +448,26 @@ fn parse_next_checkin(text: &str) -> Option<u64> {
         }
     }
     None
+}
+
+fn parse_token_usage(events: &[crate::cli_adapter::StreamEvent]) -> (u64, u64, f64) {
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
+    for event in events {
+        if event.event_type == "result" || event.event_type == "usage" {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&event.raw_json) {
+                let usage = parsed.get("usage").unwrap_or(&parsed);
+                if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                    input_tokens += input;
+                }
+                if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                    output_tokens += output;
+                }
+            }
+        }
+    }
+    let cost = (input_tokens as f64 * 3.0 / 1_000_000.0) + (output_tokens as f64 * 15.0 / 1_000_000.0);
+    (input_tokens, output_tokens, (cost * 10000.0).round() / 10000.0)
 }
 
 fn serialize_events(events: &[crate::cli_adapter::StreamEvent]) -> String {

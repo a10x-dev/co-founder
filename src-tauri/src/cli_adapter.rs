@@ -292,3 +292,18 @@ pub fn detect_claude_path() -> Option<String> {
     }
     None
 }
+
+pub fn get_claude_version() -> Option<String> {
+    let output = Command::new("claude")
+        .arg("--version")
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !version.is_empty() {
+            return Some(version);
+        }
+    }
+    None
+}

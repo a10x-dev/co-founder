@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import Sidebar from "@/components/Sidebar";
 import HomeView from "@/views/HomeView";
@@ -6,6 +6,7 @@ import AgentDetailView from "@/views/AgentDetailView";
 import CreateAgentView from "@/views/CreateAgentView";
 import ImportAgentView from "@/views/ImportAgentView";
 import JourneyExportView from "@/views/JourneyExportView";
+import OnboardingView from "@/views/OnboardingView";
 import SettingsView from "@/views/SettingsView";
 import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -22,11 +23,30 @@ export default function App() {
     sessions: WorkSessionLog[];
   } | null>(null);
   const [cliWarning, setCliWarning] = useState<string | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
   const { notify } = useNotifications();
 
+  const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [toggleSidebar]);
+
   const handleSelectAgent = (id: string) => {
     setSelectedAgentId(id);
+    setView("home");
+  };
+
+  const handleHome = () => {
+    setSelectedAgentId(null);
     setView("home");
   };
 
@@ -76,7 +96,7 @@ export default function App() {
         if (path === undefined) return;
         if (!path) {
           setCliWarning(
-            "Claude CLI not found. Install Claude CLI or set the path in Settings.",
+            "Claude Code not found. Install it to start using your co-founders.",
           );
         }
       })
@@ -88,11 +108,11 @@ export default function App() {
       if (!payload) return;
 
       if (payload.outcome === "blocked") {
-        notify("Agent blocked", "An agent is blocked and needs your review.");
+        notify("Co-founder blocked", "Your co-founder is blocked and needs your review.");
       } else if (payload.outcome === "error") {
-        notify("Agent error", "An agent session ended with an error.");
+        notify("Co-founder error", "A work session ended with an error.");
       } else {
-        notify("Session completed", "An agent finished a work session.");
+        notify("Session completed", "Your co-founder finished a work session.");
       }
     }).then((fn) => {
       if (active) unlistenSession = fn;
@@ -103,7 +123,7 @@ export default function App() {
     listen<{ message?: string }>("cli-missing", (event) => {
       const message =
         event.payload?.message ??
-        "Claude CLI not found. Install Claude CLI or set the path in Settings.";
+        "Claude Code not found. Install it to start using your co-founders.";
       setCliWarning(message);
     }).then((fn) => {
       if (active) unlistenCliMissing = fn;
@@ -116,7 +136,7 @@ export default function App() {
       (event) => {
         refetch();
         const message =
-          event.payload?.error ?? "An agent session crashed unexpectedly.";
+          event.payload?.error ?? "A work session crashed unexpectedly.";
         notify("Session runtime error", message);
       },
     ).then((fn) => {
@@ -125,11 +145,30 @@ export default function App() {
       // Running outside Tauri (web dev) — no event bus available.
     });
 
+    let unlistenBudget: (() => void) | null = null;
+    listen<{ agent_name?: string; daily_spend?: number; budget?: number }>("budget-exceeded", (event) => {
+      const name = event.payload?.agent_name ?? "Your co-founder";
+      notify("Budget limit reached", `${name} paused — daily spend reached $${event.payload?.daily_spend?.toFixed(2) ?? "?"}.`);
+      refetch();
+    }).then((fn) => {
+      if (active) unlistenBudget = fn;
+    }).catch(() => {});
+
+    let unlistenReport: (() => void) | null = null;
+    listen<{ agent_name?: string }>("daily-report-ready", (event) => {
+      const name = event.payload?.agent_name ?? "Your co-founder";
+      notify("Daily report ready", `${name}'s morning summary is ready.`);
+    }).then((fn) => {
+      if (active) unlistenReport = fn;
+    }).catch(() => {});
+
     return () => {
       active = false;
       if (unlistenSession) unlistenSession();
       if (unlistenCliMissing) unlistenCliMissing();
       if (unlistenSessionError) unlistenSessionError();
+      if (unlistenReport) unlistenReport();
+      if (unlistenBudget) unlistenBudget();
     };
   }, [notify, refetch]);
 
@@ -138,7 +177,10 @@ export default function App() {
       <Sidebar
         agents={agents}
         selectedAgentId={selectedAgentId}
+        isOpen={sidebarOpen}
+        onToggle={toggleSidebar}
         onSelectAgent={handleSelectAgent}
+        onHome={handleHome}
         onNewAgent={handleNewAgent}
         onImportAgent={handleImportAgent}
         onSettings={handleSettings}
@@ -198,6 +240,11 @@ export default function App() {
               setView("home");
               refetch();
             }}
+          />
+        ) : agents.length === 0 ? (
+          <OnboardingView
+            onCreated={handleAgentCreated}
+            onImport={handleImportAgent}
           />
         ) : (
           <HomeView

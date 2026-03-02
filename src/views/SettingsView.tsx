@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderOpen, Search } from "lucide-react";
-import { detectClaudeCli, getGlobalSettings, updateGlobalSettings } from "@/lib/api";
+import { FolderOpen, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { detectClaudeCli, getGlobalSettings, updateGlobalSettings, getDbSize, getClaudeVersion } from "@/lib/api";
 import type { GlobalSettings } from "@/types";
+import FriendlyError from "@/components/FriendlyError";
 
 const buttonClass =
   "rounded-lg font-medium transition-all duration-150 ease-out cursor-pointer";
@@ -14,6 +15,10 @@ export default function SettingsView() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [dbSize, setDbSize] = useState<number | null>(null);
+  const [cliVersion, setCliVersion] = useState<string | null>(null);
+  const [cliAutoDetected, setCliAutoDetected] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -30,6 +35,18 @@ export default function SettingsView() {
       .finally(() => {
         if (active) setLoading(false);
       });
+
+    getDbSize()
+      .then((size) => { if (active) setDbSize(size); })
+      .catch(() => {});
+
+    getClaudeVersion()
+      .then((v) => { if (active) setCliVersion(v); })
+      .catch(() => {});
+
+    detectClaudeCli()
+      .then((path) => { if (active && path) setCliAutoDetected(true); })
+      .catch(() => {});
 
     return () => {
       active = false;
@@ -115,14 +132,17 @@ export default function SettingsView() {
         Settings
       </h1>
       <p className="text-[15px] mb-8" style={{ color: "var(--text-secondary)" }}>
-        Configure runtime defaults and system integrations.
+        Configure how Agent Founder works on your machine.
       </p>
 
       <div className="rounded-xl border p-6 space-y-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
         <div>
-          <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
-            Default workspace root
+          <label className="block text-[14px] font-medium mb-1" style={{ color: "var(--text-primary)" }}>
+            Projects folder
           </label>
+          <p className="text-[12px] mb-2" style={{ color: "var(--text-tertiary)" }}>
+            Where new co-founder workspaces are created.
+          </p>
           <div className="flex gap-2">
             <input
               type="text"
@@ -146,68 +166,13 @@ export default function SettingsView() {
           </div>
         </div>
 
-        <div>
-          <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
-            Max concurrent agents
-          </label>
-          <input
-            type="number"
-            min={1}
-            max={10}
-            value={settings.max_concurrent_agents}
-            onChange={(e) => {
-              const parsed = Number.parseInt(e.target.value, 10);
-              if (Number.isNaN(parsed)) return;
-              updateField("max_concurrent_agents", Math.min(10, Math.max(1, parsed)));
-            }}
-            className="w-32 rounded-lg outline-none h-11 px-3"
-            style={{
-              background: "var(--bg-inset)",
-              border: "1px solid var(--border-default)",
-              color: "var(--text-primary)",
-            }}
-          />
-          <p className="text-[12px] mt-2" style={{ color: "var(--text-tertiary)" }}>
-            Changes apply after app restart.
-          </p>
-        </div>
-
-        <div>
-          <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
-            Claude CLI path
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={settings.claude_cli_path}
-              onChange={(e) => updateField("claude_cli_path", e.target.value)}
-              placeholder="claude"
-              className="flex-1 rounded-lg outline-none h-11 px-3"
-              style={{
-                background: "var(--bg-inset)",
-                border: "1px solid var(--border-default)",
-                color: "var(--text-primary)",
-              }}
-            />
-            <button
-              onClick={autoDetectClaude}
-              disabled={detecting}
-              className={`${buttonClass} h-11 px-3 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
-              style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
-            >
-              <Search size={16} strokeWidth={2} />
-              {detecting ? "Detecting..." : "Detect"}
-            </button>
-          </div>
-        </div>
-
         <div className="flex items-center justify-between rounded-lg px-4 py-3" style={{ background: "var(--bg-inset)" }}>
           <div>
             <p className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>
               Minimize to tray on close
             </p>
             <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-              Keep agents running in the background.
+              Keep co-founders running in the background.
             </p>
           </div>
           <label className="inline-flex items-center cursor-pointer">
@@ -233,6 +198,99 @@ export default function SettingsView() {
           </label>
         </div>
 
+        {/* Collapsible Advanced section */}
+        <div>
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-2 text-[14px] font-medium cursor-pointer"
+            style={{ color: "var(--text-secondary)" }}
+          >
+            {showAdvanced ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            Advanced
+          </button>
+          {showAdvanced && (
+            <div className="mt-4 space-y-5 pl-1">
+              {cliVersion && (
+                <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: "var(--bg-inset)" }}>
+                  <span className="text-[13px] font-medium" style={{ color: "var(--text-secondary)" }}>Claude CLI</span>
+                  <span className="text-[13px] font-mono" style={{ color: "var(--text-tertiary)" }}>{cliVersion}</span>
+                  {cliAutoDetected && (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: "color-mix(in srgb, var(--status-active) 12%, transparent)", color: "var(--status-active)" }}>Auto-detected</span>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
+                  Claude Code path
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={settings.claude_cli_path}
+                    onChange={(e) => updateField("claude_cli_path", e.target.value)}
+                    placeholder={cliAutoDetected ? "Auto-detected" : "claude"}
+                    className="flex-1 rounded-lg outline-none h-11 px-3"
+                    style={{
+                      background: "var(--bg-inset)",
+                      border: "1px solid var(--border-default)",
+                      color: "var(--text-primary)",
+                    }}
+                  />
+                  <button
+                    onClick={autoDetectClaude}
+                    disabled={detecting}
+                    className={`${buttonClass} h-11 px-3 inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
+                  >
+                    <Search size={16} strokeWidth={2} />
+                    {detecting ? "Detecting..." : "Detect"}
+                  </button>
+                </div>
+                {settings.claude_cli_path && (
+                  <p className="text-[12px] mt-1.5" style={{ color: "var(--text-tertiary)" }}>
+                    Path: {settings.claude_cli_path}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
+                  Max co-founders running at once
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={settings.max_concurrent_agents}
+                  onChange={(e) => {
+                    const parsed = Number.parseInt(e.target.value, 10);
+                    if (Number.isNaN(parsed)) return;
+                    updateField("max_concurrent_agents", Math.min(10, Math.max(1, parsed)));
+                  }}
+                  className="w-32 rounded-lg outline-none h-11 px-3"
+                  style={{
+                    background: "var(--bg-inset)",
+                    border: "1px solid var(--border-default)",
+                    color: "var(--text-primary)",
+                  }}
+                />
+                <p className="text-[12px] mt-2" style={{ color: "var(--text-tertiary)" }}>
+                  Changes apply after app restart.
+                </p>
+              </div>
+
+              {dbSize !== null && (
+                <div className="flex items-center gap-3">
+                  <span className="text-[14px]" style={{ color: "var(--text-secondary)" }}>
+                    Database size: {dbSize < 1024 * 1024 ? `${(dbSize / 1024).toFixed(0)} KB` : `${(dbSize / (1024 * 1024)).toFixed(1)} MB`}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="flex items-center gap-3 pt-2">
           <button
             onClick={handleSave}
@@ -243,7 +301,7 @@ export default function SettingsView() {
             {saving ? "Saving..." : "Save settings"}
           </button>
           {message && <p className="text-[13px]" style={{ color: "var(--status-active)" }}>{message}</p>}
-          {error && <p className="text-[13px]" style={{ color: "var(--status-error)" }}>{error}</p>}
+          {error && <FriendlyError error={error} />}
         </div>
       </div>
     </div>

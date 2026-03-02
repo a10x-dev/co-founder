@@ -4,6 +4,8 @@ import { FolderOpen, FolderCheck } from "lucide-react";
 import type { ImportAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { importAgent, readTextFile } from "@/lib/api";
+import FriendlyError from "@/components/FriendlyError";
+import { extractError } from "@/lib/friendlyErrors";
 
 const STEPS = ["Project", "Mission", "Schedule"] as const;
 
@@ -100,7 +102,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
       await importAgent(req);
       onImported();
     } catch (e) {
-      setError(typeof e === "string" ? e : e instanceof Error ? e.message : "Something went wrong");
+      setError(extractError(e));
     } finally {
       setIsSubmitting(false);
     }
@@ -187,7 +189,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                   Which project?
                 </h1>
                 <p className="mt-2" style={{ fontSize: 15, color: "var(--text-secondary)" }}>
-                  Point your agent at an existing folder on your computer.
+                  Point your co-founder at an existing folder on your computer.
                 </p>
               </div>
 
@@ -254,7 +256,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                   )}
                   {alreadyHasFounder && (
                     <p className="text-[13px]" style={{ color: "var(--text-secondary)" }}>
-                      This folder already has an agent setup — it will be reconnected.
+                      This folder already has a co-founder setup — it will be reconnected.
                     </p>
                   )}
                 </div>
@@ -266,7 +268,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                     className="block mb-2"
                     style={{ fontSize: 15, color: "var(--text-primary)" }}
                   >
-                    Name this agent
+                    Name this co-founder
                   </label>
                   <input
                     type="text"
@@ -292,10 +294,10 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
             <div className="flex flex-col gap-6">
               <div>
                 <h1 className="font-semibold" style={{ fontSize: 28, color: "var(--text-primary)" }}>
-                  What should your agent work on?
+                  What should your co-founder work on?
                 </h1>
                 <p className="mt-2" style={{ fontSize: 15, color: "var(--text-secondary)" }}>
-                  Tell your agent what to focus on in this project.
+                  Tell your co-founder what to focus on in this project.
                   {mission && " We pre-filled this from your README — edit as needed."}
                 </p>
               </div>
@@ -325,7 +327,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                   Almost done
                 </h1>
                 <p className="mt-2" style={{ fontSize: 15, color: "var(--text-secondary)" }}>
-                  Set up your agent's working style and check-in schedule.
+                  Set up your co-founder's working style and check-in schedule.
                 </p>
               </div>
 
@@ -379,7 +381,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                   className="block mb-3 font-medium"
                   style={{ fontSize: 15, color: "var(--text-primary)" }}
                 >
-                  How often should your agent check in?
+                  How often should your co-founder check in?
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {CHECKIN_OPTIONS.map((opt) => {
@@ -420,7 +422,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                   className="block mb-3 font-medium"
                   style={{ fontSize: 15, color: "var(--text-primary)" }}
                 >
-                  How should your agent make decisions?
+                  How should your co-founder make decisions?
                 </label>
                 <div className="flex gap-2">
                   {AUTONOMY_OPTIONS.map((opt) => {
@@ -520,9 +522,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
         </div>
         {error && (
           <div className="w-full max-w-[520px] mx-auto px-6 pb-3">
-            <p className="text-[13px]" style={{ color: "var(--status-error)" }}>
-              {error}
-            </p>
+            <FriendlyError error={error} />
           </div>
         )}
       </div>

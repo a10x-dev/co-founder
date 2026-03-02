@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, Artifact, ToolManifestEntry } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -103,4 +103,99 @@ export async function readToolsManifest(agentId: string): Promise<ToolManifestEn
   return invoke<string>("read_tools_manifest", { agentId }).then((raw) => {
     try { return JSON.parse(raw) as ToolManifestEntry[]; } catch { return []; }
   });
+}
+
+export async function getIntegrations(agentId: string): Promise<McpJson> {
+  return invoke<string>("get_integrations", { agentId }).then((raw) => {
+    try { return JSON.parse(raw) as McpJson; } catch { return { mcpServers: {} }; }
+  });
+}
+
+export async function saveIntegration(agentId: string, serverKey: string, command: string, args: string[], env: Record<string, string>): Promise<void> {
+  return invoke("save_integration", { agentId, serverKey, command, args, env });
+}
+
+export async function removeIntegration(agentId: string, serverKey: string): Promise<void> {
+  return invoke("remove_integration", { agentId, serverKey });
+}
+
+export async function clearAgentSessions(id: string): Promise<void> {
+  return invoke("clear_agent_sessions", { id });
+}
+
+export async function cloneAgent(id: string, newName: string): Promise<Agent> {
+  return invoke("clone_agent", { id, newName });
+}
+
+export async function generateDailyReport(agentId: string): Promise<string> {
+  return invoke("generate_daily_report", { agentId });
+}
+
+export interface DailyReport {
+  date: string;
+  content: string;
+}
+
+export async function getDailyReports(agentId: string): Promise<DailyReport[]> {
+  return invoke("get_daily_reports", { agentId });
+}
+
+export async function getDbSize(): Promise<number> {
+  return invoke("get_db_size");
+}
+
+export async function getClaudeVersion(): Promise<string> {
+  return invoke("get_claude_version_cmd");
+}
+
+export async function updateDailyBudget(id: string, budget: number): Promise<void> {
+  return invoke("update_daily_budget", { id, budget });
+}
+
+export async function getSpendBreakdown(agentId: string): Promise<SpendBreakdown> {
+  return invoke("get_spend_breakdown", { agentId });
+}
+
+export async function gitCreateBranch(agentId: string): Promise<string> {
+  return invoke("git_create_branch", { agentId });
+}
+
+export async function gitGetStatus(agentId: string): Promise<GitStatus> {
+  return invoke("git_get_status", { agentId });
+}
+
+export async function gitGetDiff(agentId: string): Promise<string> {
+  return invoke("git_get_diff", { agentId });
+}
+
+export async function gitRollback(agentId: string, commitHash: string): Promise<void> {
+  return invoke("git_rollback", { agentId, commitHash });
+}
+
+export async function gitUndoLastSession(agentId: string): Promise<string> {
+  return invoke("git_undo_last_session", { agentId });
+}
+
+export async function getTaskBoard(agentId: string): Promise<TaskBoard> {
+  return invoke("get_task_board", { agentId });
+}
+
+export async function moveTask(agentId: string, task: string, fromColumn: string, toColumn: string): Promise<void> {
+  return invoke("move_task", { agentId, task, fromColumn, toColumn });
+}
+
+export async function getSchedule(agentId: string): Promise<ScheduleEntry[]> {
+  return invoke("get_schedule", { agentId });
+}
+
+export async function saveScheduleEntry(agentId: string, entry: ScheduleEntry): Promise<void> {
+  return invoke("save_schedule_entry", { agentId, entry });
+}
+
+export async function deleteScheduleEntry(agentId: string, entryId: string): Promise<void> {
+  return invoke("delete_schedule_entry", { agentId, entryId });
+}
+
+export async function toggleScheduleEntry(agentId: string, entryId: string, enabled: boolean): Promise<void> {
+  return invoke("toggle_schedule_entry", { agentId, entryId, enabled });
 }
