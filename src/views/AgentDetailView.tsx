@@ -18,7 +18,6 @@ import {
   RefreshCw,
   Zap,
   FolderCheck,
-  BarChart3,
   Hammer,
   Clock,
   Eye,
@@ -29,6 +28,7 @@ import {
   CalendarClock,
   Plus,
   Trash,
+  ChevronDown,
 } from "lucide-react";
 import type { Agent, AgentStatus, WorkSessionLog, ActivityEntry, WorkspaceHealth, Artifact, ToolManifestEntry, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry } from "@/types";
 import {
@@ -275,7 +275,7 @@ export interface AgentDetailViewProps {
 const ghostButton =
   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium transition-all duration-150 ease-out cursor-pointer";
 
-type TabKey = "activity" | "messages" | "files" | "secrets" | "integrations" | "artifacts" | "tools" | "reports" | "spend" | "git" | "tasks" | "schedule";
+type TabKey = "overview" | "inbox" | "schedule" | "settings" | "artifacts" | "tools" | "reports";
 
 export default function AgentDetailView({
   agent,
@@ -300,7 +300,7 @@ export default function AgentDetailView({
   const [sessionProgress, setSessionProgress] = useState<{ turn: number; maxTurns: number; elapsedSecs: number; maxDurationSecs: number } | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<TabKey>("activity");
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
   // Secrets
   const [envVars, setEnvVars] = useState<AgentEnvVar[]>([]);
@@ -352,36 +352,38 @@ export default function AgentDetailView({
   const [newScheduleAction, setNewScheduleAction] = useState("");
   const [newScheduleRecurrence, setNewScheduleRecurrence] = useState<"once" | "daily" | "weekdays" | "weekly">("daily");
 
-  // Core data — always needed
+  // Core data + contextual tab counts (eagerly fetched)
   useEffect(() => {
     getWorkSessions(agent.id).then(setSessions).catch(() => setSessions([]));
     checkWorkspaceHealth(agent.id).then(setWsHealth).catch(() => {});
+    readArtifactsManifest(agent.id).then(setArtifacts).catch(() => setArtifacts([]));
+    readToolsManifest(agent.id).then(setTools).catch(() => setTools([]));
+    getDailyReports(agent.id).then(setReports).catch(() => setReports([]));
+    getSpendBreakdown(agent.id).then(setSpend).catch(() => {});
+    getTaskBoard(agent.id).then(setTaskBoard).catch(() => {});
+    gitGetStatus(agent.id).then(setGitStatus).catch(() => {});
     setBudgetInput(agent.daily_budget_usd.toString());
     setLiveOutput([]);
     setSessionProgress(null);
   }, [agent.id, agent.daily_budget_usd]);
 
-  // Lazy-load tab data only when the tab is activated
+  // Lazy-load tab data when tab is activated
   useEffect(() => {
     const id = agent.id;
     const ws = agent.workspace;
     switch (activeTab) {
-      case "secrets": getAgentEnvVars(id).then(setEnvVars).catch(() => {}); break;
-      case "files":
-        readTextFile(agent.id, `${ws}/.founder/SOUL.md`).then(setSoulContent).catch(() => setSoulContent(""));
-        readTextFile(agent.id, `${ws}/.founder/MISSION.md`).then(setMissionContent).catch(() => setMissionContent(""));
-        readTextFile(agent.id, `${ws}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => setMemoryContent(""));
+      case "inbox":
+        readTextFile(id, `${ws}/.founder/INBOX.md`).then(setInboxContent).catch(() => setInboxContent(""));
         break;
-      case "messages":
-        readTextFile(agent.id, `${ws}/.founder/INBOX.md`).then(setInboxContent).catch(() => setInboxContent(""));
+      case "schedule":
+        getSchedule(id).then(setScheduleEntries).catch(() => setScheduleEntries([]));
         break;
-      case "artifacts": readArtifactsManifest(id).then(setArtifacts).catch(() => setArtifacts([])); break;
-      case "tools": readToolsManifest(id).then(setTools).catch(() => setTools([])); break;
-      case "reports": getDailyReports(id).then(setReports).catch(() => setReports([])); break;
-      case "spend": getSpendBreakdown(id).then(setSpend).catch(() => {}); break;
-      case "git": gitGetStatus(id).then(setGitStatus).catch(() => {}); break;
-      case "tasks": getTaskBoard(id).then(setTaskBoard).catch(() => {}); break;
-      case "schedule": getSchedule(id).then(setScheduleEntries).catch(() => setScheduleEntries([])); break;
+      case "settings":
+        getAgentEnvVars(id).then(setEnvVars).catch(() => {});
+        readTextFile(id, `${ws}/.founder/SOUL.md`).then(setSoulContent).catch(() => setSoulContent(""));
+        readTextFile(id, `${ws}/.founder/MISSION.md`).then(setMissionContent).catch(() => setMissionContent(""));
+        readTextFile(id, `${ws}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => setMemoryContent(""));
+        break;
     }
   }, [agent.id, agent.workspace, activeTab]);
 
@@ -395,6 +397,7 @@ export default function AgentDetailView({
       setSessionProgress(null);
       readArtifactsManifest(agent.id).then(setArtifacts).catch(() => {});
       readToolsManifest(agent.id).then(setTools).catch(() => {});
+      getSpendBreakdown(agent.id).then(setSpend).catch(() => {});
       onRefetch();
     }).then((fn) => { if (active) unlisten = fn; }).catch(() => {});
     return () => { active = false; if (unlisten) unlisten(); };
@@ -506,19 +509,18 @@ export default function AgentDetailView({
   const canStart = agent.status !== "running";
 
   const tabs: { key: TabKey; label: string; badge?: number }[] = [
-    { key: "activity", label: "Activity" },
-    { key: "messages", label: "Messages" },
-    { key: "files", label: "Files" },
-    { key: "secrets", label: "Secrets", badge: envVars.length || undefined },
-    { key: "integrations", label: "Integrations" },
-    { key: "artifacts", label: "Artifacts", badge: artifacts.length || undefined },
-    { key: "tools", label: "Tools", badge: tools.length || undefined },
-    { key: "reports", label: "Reports" },
-    { key: "spend", label: "Spend" },
-    { key: "git", label: "Git" },
-    { key: "tasks", label: "Tasks" },
-    { key: "schedule", label: "Schedule", badge: scheduleEntries.filter(e => e.enabled).length || undefined },
+    { key: "overview", label: "Overview" },
+    { key: "inbox", label: "Inbox" },
+    { key: "schedule", label: "Schedule" },
+    { key: "settings", label: "Settings" },
+    ...(artifacts.length > 0 ? [{ key: "artifacts" as TabKey, label: "Artifacts", badge: artifacts.length }] : []),
+    ...(tools.length > 0 ? [{ key: "tools" as TabKey, label: "Tools", badge: tools.length }] : []),
+    ...(reports.length > 0 ? [{ key: "reports" as TabKey, label: "Reports" }] : []),
   ];
+
+  // Overview helpers
+  const hasActiveTasks = taskBoard?.columns.some(c => (c.column === "In Progress" || c.column === "To Do") && c.tasks.length > 0);
+  const gitHasChanges = gitStatus?.is_repo && (gitStatus?.changed_files ?? 0) > 0;
 
   return (
     <div className="max-w-[860px] mx-auto" style={{ paddingLeft: 32, paddingRight: 32, paddingTop: 40, paddingBottom: 48 }}>
@@ -738,58 +740,170 @@ export default function AgentDetailView({
         ))}
       </div>
 
-      {/* Activity Tab */}
-      {activeTab === "activity" && (
+      {/* ===== OVERVIEW TAB ===== */}
+      {activeTab === "overview" && (
         <>
-          <div>
-            <h2 className="text-[17px] font-semibold mb-4" style={{ color: "var(--text-primary)" }}>What's happening</h2>
-            {latestSession?.outcome === "blocked" && (
-              <div className="rounded-xl p-4 border flex gap-3 mb-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", borderLeftWidth: 3, borderLeftColor: "var(--status-working)" }}>
-                <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
-                <div className="min-w-0">
-                  <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Co-founder is blocked</p>
-                  <p className="text-[14px]" style={{ color: "var(--text-secondary)" }}>{latestSession.summary || "Review the latest session details for blocker context."}</p>
+          {/* Spend stats row */}
+          {spend && (spend.daily > 0 || spend.weekly > 0 || spend.total > 0) && (
+            <div className="flex items-center gap-4 mb-5 text-[13px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
+              <span>${spend.daily.toFixed(2)} today</span>
+              <span>· ${spend.weekly.toFixed(2)} this week</span>
+              <span>· ${spend.total.toFixed(2)} total</span>
+            </div>
+          )}
+
+          {/* Blocked banner */}
+          {latestSession?.outcome === "blocked" && (
+            <div className="rounded-xl p-4 border flex gap-3 mb-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", borderLeftWidth: 3, borderLeftColor: "var(--status-working)" }}>
+              <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
+              <div className="min-w-0">
+                <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Co-founder is blocked</p>
+                <p className="text-[14px]" style={{ color: "var(--text-secondary)" }}>{latestSession.summary || "Review the latest session details for blocker context."}</p>
+              </div>
+            </div>
+          )}
+
+          {/* Git changes alert */}
+          {gitHasChanges && (
+            <div className="rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3" style={{ background: "var(--bg-inset)" }}>
+              <GitBranch size={14} style={{ color: "var(--text-tertiary)" }} />
+              <span className="text-[13px] flex-1" style={{ color: "var(--text-secondary)" }}>
+                {gitStatus!.changed_files} file{gitStatus!.changed_files !== 1 ? "s" : ""} changed
+                {gitStatus!.branch ? ` on ${gitStatus!.branch}` : ""}
+              </span>
+              <button
+                onClick={async () => { const diff = await gitGetDiff(agent.id); setGitDiff(diff || "No changes."); }}
+                className="text-[12px] font-medium cursor-pointer"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                View diff
+              </button>
+              <button
+                disabled={undoing}
+                onClick={async () => {
+                  const confirmed = window.confirm("Undo the last session? This will hard reset to the pre-session commit.");
+                  if (!confirmed) return;
+                  setUndoing(true);
+                  try {
+                    const msg = await gitUndoLastSession(agent.id);
+                    window.alert(msg);
+                    gitGetStatus(agent.id).then(setGitStatus).catch(() => {});
+                  } catch (e) { window.alert(`Undo failed: ${e instanceof Error ? e.message : String(e)}`); }
+                  setUndoing(false);
+                }}
+                className="text-[12px] font-medium cursor-pointer disabled:opacity-50"
+                style={{ color: "var(--status-error)" }}
+              >
+                {undoing ? "Undoing..." : "Undo last session"}
+              </button>
+            </div>
+          )}
+
+          {gitDiff !== null && (
+            <div className="rounded-xl border overflow-hidden mb-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+              <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: "var(--border-default)" }}>
+                <span className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>Diff</span>
+                <button onClick={() => setGitDiff(null)} className="text-[12px] cursor-pointer" style={{ color: "var(--text-tertiary)" }}>Close</button>
+              </div>
+              <pre className="p-3 text-[12px] font-mono overflow-auto max-h-96 whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{gitDiff}</pre>
+            </div>
+          )}
+
+          {/* Last session card */}
+          {latestSession && latestSession.summary !== "Nothing to do" && (
+            <div className="mb-5">
+              <h2 className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Latest update</h2>
+              <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+                <p className="text-[14px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+                  {latestSession.summary}
+                </p>
+                <div className="flex items-center gap-3 mt-3 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+                  <span>{formatSessionDate(latestSession.started_at)}</span>
+                  <span>· {latestSession.turns} turns</span>
+                  {latestSession.cost_usd > 0 && <span>· ${latestSession.cost_usd.toFixed(4)}</span>}
+                  <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: `color-mix(in srgb, ${OUTCOME_CONFIG[latestSession.outcome].color} 10%, transparent)`, color: OUTCOME_CONFIG[latestSession.outcome].color }}>
+                    {OUTCOME_CONFIG[latestSession.outcome].label}
+                  </span>
                 </div>
               </div>
-            )}
-            <div className="flex flex-col gap-3">
-              {activity.length === 0 ? (
-                <p className="text-[14px]" style={{ color: "var(--text-tertiary)" }}>No activity yet. Start your co-founder to begin working.</p>
-              ) : (
-                activity.map((entry, i) => {
+            </div>
+          )}
+
+          {/* Recent activity */}
+          {activity.length > 0 && (
+            <div className="mb-5">
+              <h2 className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Recent actions</h2>
+              <div className="flex flex-col gap-2">
+                {activity.slice(0, 5).map((entry, i) => {
                   const Icon = ICON_MAP[entry.icon] ?? Wrench;
-                  const entryId = `activity-${i}`;
-                  const showDetails = expandedDetails.has(entryId);
                   return (
-                    <div key={entryId} className="rounded-xl p-4 border flex gap-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", borderWidth: 1 }}>
-                      <Icon size={20} className="shrink-0 mt-0.5" style={{ color: "var(--text-secondary)" }} />
+                    <div key={`activity-${i}`} className="flex items-start gap-3 px-3 py-2 rounded-lg" style={{ background: "var(--bg-surface)" }}>
+                      <Icon size={16} className="shrink-0 mt-0.5" style={{ color: "var(--text-tertiary)" }} />
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{entry.title}</p>
-                            <p className="text-[14px] mt-0.5" style={{ color: "var(--text-secondary)" }}>{entry.description || "No details"}</p>
-                          </div>
-                          <span className="text-[13px] shrink-0" style={{ color: "var(--text-tertiary)" }}>{entry.timestamp}</span>
-                        </div>
-                        {entry.details && (
-                          <>
-                            <button onClick={() => toggleDetails(entryId)} className="text-[13px] mt-2 font-medium transition-all duration-150 ease-out cursor-pointer" style={{ color: "var(--text-secondary)" }}>[Details]</button>
-                            {showDetails && (
-                              <pre className="mt-2 rounded-lg p-3 text-[13px] font-mono overflow-x-auto" style={{ background: "var(--bg-inset)", color: "var(--text-secondary)" }}>{entry.details}</pre>
-                            )}
-                          </>
-                        )}
+                        <span className="text-[13px]" style={{ color: "var(--text-secondary)" }}>{entry.title}</span>
+                        {entry.description && <span className="text-[13px] ml-1" style={{ color: "var(--text-tertiary)" }}>— {truncate(entry.description, 80)}</span>}
                       </div>
                     </div>
                   );
-                })
-              )}
+                })}
+                {activity.length > 5 && (
+                  <p className="text-[12px] pl-3" style={{ color: "var(--text-tertiary)" }}>+ {activity.length - 5} more actions</p>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
-          <div style={{ marginTop: 32 }}>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Past work sessions</h2>
+          {/* Priorities (inline tasks) */}
+          {hasActiveTasks && taskBoard && (
+            <div className="mb-5">
+              <h2 className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Priorities</h2>
+              <div className="space-y-1.5">
+                {taskBoard.columns
+                  .filter(col => col.column === "In Progress" || col.column === "To Do")
+                  .flatMap(col => col.tasks.map(task => ({ task, column: col.column })))
+                  .slice(0, 8)
+                  .map(({ task, column }, i) => (
+                    <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg group" style={{ background: "var(--bg-surface)" }}>
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: column === "In Progress" ? "var(--status-active)" : "var(--border-default)" }}
+                      />
+                      <span className="text-[13px] flex-1 min-w-0 truncate" style={{ color: "var(--text-secondary)" }}>{task}</span>
+                      <span className="text-[11px] shrink-0" style={{ color: "var(--text-tertiary)" }}>{column}</span>
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {taskBoard.columns
+                          .filter(c => c.column !== column)
+                          .slice(0, 2)
+                          .map(target => (
+                            <button
+                              key={target.column}
+                              onClick={async () => {
+                                await moveTask(agent.id, task, column, target.column);
+                                getTaskBoard(agent.id).then(setTaskBoard).catch(() => {});
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer flex items-center gap-0.5"
+                              style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}
+                              title={`Move to ${target.column}`}
+                            >
+                              <ArrowRight size={9} /> {target.column}
+                            </button>
+                          ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+
+          {/* No activity state */}
+          {!latestSession && activity.length === 0 && (
+            <p className="text-[14px] mb-5" style={{ color: "var(--text-tertiary)" }}>No activity yet. Start your co-founder to begin working.</p>
+          )}
+
+          {/* Past sessions */}
+          <div style={{ marginTop: 8 }}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>Past sessions</h2>
               <button className={ghostButton} style={{ color: "var(--text-secondary)" }} onClick={() => onShareJourney(agent)}>
                 <Share2 size={14} strokeWidth={2} /> Share journey
               </button>
@@ -862,10 +976,13 @@ export default function AgentDetailView({
         </>
       )}
 
-      {/* Messages Tab */}
-      {activeTab === "messages" && (
+      {/* ===== INBOX TAB ===== */}
+      {activeTab === "inbox" && (
         <div className="space-y-4">
-          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Message your co-founder</h2>
+          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Inbox</h2>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Messages are delivered on the next check-in.
+          </p>
           <div className="flex gap-2">
             <input
               type="text" value={messageText} onChange={(e) => setMessageText(e.target.value)}
@@ -880,9 +997,6 @@ export default function AgentDetailView({
               {messageSending ? "Sending..." : "Send"}
             </button>
           </div>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Messages are delivered on the next check-in.
-          </p>
           {inboxContent && inboxContent.includes("---") && (
             <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
               <h3 className="text-[15px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>Pending messages</h3>
@@ -892,449 +1006,7 @@ export default function AgentDetailView({
         </div>
       )}
 
-      {/* Files Tab */}
-      {activeTab === "files" && (
-        <div className="space-y-6">
-          {[
-            { label: "Mission", subtitle: "MISSION.md", value: missionContent, setter: setMissionContent, filename: "MISSION.md" },
-            { label: "Personality", subtitle: "SOUL.md", value: soulContent, setter: setSoulContent, filename: "SOUL.md" },
-            { label: "Memory", subtitle: "MEMORY.md", value: memoryContent, setter: setMemoryContent, filename: "MEMORY.md" },
-          ].map(({ label, subtitle, value, setter, filename }) => (
-            <div key={label}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{label}</h3>
-                  <span className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)" }}>{subtitle}</span>
-                </div>
-                <button onClick={() => handleSaveFile(filename, value)} disabled={fileSaving}
-                  className="text-[13px] font-medium px-3 py-1 rounded-lg cursor-pointer disabled:opacity-50"
-                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
-                  {fileSaving ? "Saving..." : "Save"}
-                </button>
-              </div>
-              <textarea value={value} onChange={(e) => setter(e.target.value)} rows={8}
-                className="w-full rounded-xl p-3 text-[14px] font-mono resize-y"
-                style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none", minHeight: 120 }}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Secrets Tab */}
-      {activeTab === "secrets" && (
-        <div className="space-y-4">
-          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Environment Variables</h2>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Stored securely. Your co-founder can use these but they never appear in logs.
-          </p>
-          <div className="flex gap-2">
-            <input type="text" value={newEnvKey} onChange={(e) => setNewEnvKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
-              placeholder="KEY_NAME" className="w-48 h-10 px-3 rounded-lg text-[14px] font-mono"
-              style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
-            />
-            <input type="password" value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)}
-              placeholder="value" className="flex-1 h-10 px-3 rounded-lg text-[14px] font-mono"
-              style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
-            />
-            <button onClick={handleAddEnvVar} disabled={!newEnvKey.trim()}
-              className="h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              style={{ background: "var(--text-primary)", color: "var(--bg-base)" }}>Add</button>
-          </div>
-          {envVars.length > 0 && (
-            <div className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-              {envVars.map((envVar, i) => (
-                <div key={envVar.key} className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: i < envVars.length - 1 ? "1px solid var(--border-default)" : "none" }}>
-                  <span className="font-mono text-[14px] font-medium shrink-0" style={{ color: "var(--text-primary)", minWidth: 160 }}>{envVar.key}</span>
-                  <span className="flex-1 font-mono text-[14px] truncate cursor-pointer flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}
-                    onClick={() => setRevealedKeys((prev) => { const next = new Set(prev); if (next.has(envVar.key)) next.delete(envVar.key); else next.add(envVar.key); return next; })}>
-                    {revealedKeys.has(envVar.key) ? <><EyeOff size={13} />{envVar.value}</> : <><Eye size={13} />{"••••••••"}</>}
-                  </span>
-                  <button onClick={() => handleDeleteEnvVar(envVar.key)} className="text-[13px] cursor-pointer shrink-0" style={{ color: "var(--status-error)" }}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Integrations Tab */}
-      {activeTab === "integrations" && (
-        <IntegrationsPanel agentId={agent.id} />
-      )}
-
-      {/* Artifacts Tab */}
-      {activeTab === "artifacts" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Artifacts</h2>
-            <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{artifacts.length} artifact{artifacts.length !== 1 ? "s" : ""}</span>
-          </div>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Your co-founder can create artifacts — dashboards, metrics, checklists, and logs — to track progress.
-          </p>
-          {artifacts.length === 0 ? (
-            <div className="rounded-xl border p-8 flex flex-col items-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-              <BarChart3 size={32} strokeWidth={1.5} className="mb-3" style={{ color: "var(--text-tertiary)" }} />
-              <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>No artifacts yet</p>
-              <p className="text-[13px] mt-1 text-center" style={{ color: "var(--text-tertiary)" }}>
-                When your co-founder creates metrics, checklists, or dashboards, they'll appear here.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              {artifacts.map((artifact) => (
-                <div key={artifact.id} className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>
-                      {artifact.type}
-                    </span>
-                    <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{formatRelativeTime(artifact.updated_at)}</span>
-                  </div>
-                  <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{artifact.title}</p>
-                  {artifact.description && <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)" }}>{artifact.description}</p>}
-                  {artifact.type === "metric" && artifact.data != null && (
-                    <div className="mt-3 text-[28px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
-                      {String((artifact.data as Record<string, unknown>)?.value ?? String(artifact.data))}
-                    </div>
-                  )}
-                  {artifact.type === "checklist" && Array.isArray(artifact.data) && (
-                    <ul className="mt-2 space-y-1">
-                      {(artifact.data as Array<{ label: string; done: boolean }>).slice(0, 5).map((item, i) => (
-                        <li key={i} className="flex items-center gap-2 text-[13px]" style={{ color: "var(--text-secondary)" }}>
-                          <span className="w-3.5 h-3.5 rounded border flex items-center justify-center text-[10px]"
-                            style={{ borderColor: "var(--border-default)", background: item.done ? "var(--status-active)" : "transparent", color: "white" }}>
-                            {item.done && "✓"}
-                          </span>
-                          {item.label}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  {artifact.type === "markdown" && (
-                    <pre className="mt-2 text-[13px] font-mono whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>
-                      {truncate(String(artifact.data), 300)}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tools Tab */}
-      {activeTab === "tools" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Co-Founder Toolbox</h2>
-            <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{tools.length} tool{tools.length !== 1 ? "s" : ""}</span>
-          </div>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Tools your co-founder has built for itself. These compound over time.
-          </p>
-          {tools.length === 0 ? (
-            <div className="rounded-xl border p-8 flex flex-col items-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-              <Hammer size={32} strokeWidth={1.5} className="mb-3" style={{ color: "var(--text-tertiary)" }} />
-              <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>No tools yet</p>
-              <p className="text-[13px] mt-1 text-center" style={{ color: "var(--text-tertiary)" }}>
-                When your co-founder creates reusable scripts or tools, they'll appear here.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {tools.map((tool) => (
-                <div key={tool.name} className="rounded-xl border p-4 flex items-start gap-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <Hammer size={18} className="shrink-0 mt-0.5" style={{ color: "var(--text-secondary)" }} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{tool.name}</span>
-                      <span className="px-2 py-0.5 rounded text-[11px] font-mono" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{tool.language}</span>
-                      {tool.approved
-                        ? <span className="px-2 py-0.5 rounded text-[11px] font-medium" style={{ background: "color-mix(in srgb, var(--status-active) 12%, transparent)", color: "var(--status-active)" }}>Approved</span>
-                        : <span className="px-2 py-0.5 rounded text-[11px] font-medium" style={{ background: "color-mix(in srgb, var(--status-paused) 12%, transparent)", color: "var(--status-paused)" }}>Pending</span>}
-                    </div>
-                    <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)" }}>{tool.description}</p>
-                    <div className="flex items-center gap-3 mt-2 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-                      <span>Used {tool.use_count}x</span>
-                      <span>Created {formatRelativeTime(tool.created_at)}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Reports Tab */}
-      {activeTab === "reports" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Daily Reports</h2>
-            <button
-              onClick={async () => {
-                setGeneratingReport(true);
-                try {
-                  await generateDailyReport(agent.id);
-                  const r = await getDailyReports(agent.id);
-                  setReports(r);
-                } catch { /* ignore */ }
-                setGeneratingReport(false);
-              }}
-              disabled={generatingReport}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium cursor-pointer disabled:opacity-50"
-              style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
-            >
-              <RefreshCw size={13} className={generatingReport ? "animate-spin" : ""} />
-              {generatingReport ? "Generating..." : "Generate now"}
-            </button>
-          </div>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            A summary of your co-founder's work is generated each morning at 8am.
-          </p>
-          {reports.length === 0 ? (
-            <div className="rounded-xl border p-8 flex flex-col items-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-              <BarChart3 size={32} strokeWidth={1.5} className="mb-3" style={{ color: "var(--text-tertiary)" }} />
-              <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>No reports yet</p>
-              <p className="text-[13px] mt-1 text-center" style={{ color: "var(--text-tertiary)" }}>
-                Click "Generate now" to create today's report, or wait for the automatic morning summary.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-4">
-              {reports.map((report) => (
-                <details key={report.date} className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <summary className="px-4 py-3 cursor-pointer flex items-center gap-2 select-none">
-                    <Clock size={14} style={{ color: "var(--text-tertiary)" }} />
-                    <span className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{report.date}</span>
-                  </summary>
-                  <div className="px-4 pb-4">
-                    <div className="prose prose-sm max-w-none text-[14px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-                      {report.content.split("\n").map((line, i) => {
-                        if (line.startsWith("# ")) return <h3 key={i} className="text-[16px] font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>{line.slice(2)}</h3>;
-                        if (line.startsWith("## ")) return <h4 key={i} className="text-[14px] font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>{line.slice(3)}</h4>;
-                        if (line.startsWith("| ")) return <pre key={i} className="text-[13px] font-mono" style={{ color: "var(--text-secondary)" }}>{line}</pre>;
-                        if (line.startsWith("- ")) return <p key={i} className="ml-3 text-[13px]">{line}</p>;
-                        if (line.trim() === "") return <br key={i} />;
-                        return <p key={i} className="text-[13px]">{line}</p>;
-                      })}
-                    </div>
-                  </div>
-                </details>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Spend Tab */}
-      {activeTab === "spend" && (
-        <div className="space-y-5">
-          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Spend</h2>
-          {spend && (
-            <div className="grid grid-cols-4 gap-3">
-              {[
-                { label: "Today", value: spend.daily },
-                { label: "This week", value: spend.weekly },
-                { label: "This month", value: spend.monthly },
-                { label: "All time", value: spend.total },
-              ].map((s) => (
-                <div key={s.label} className="rounded-xl border p-4 text-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <p className="text-[22px] font-semibold" style={{ color: "var(--text-primary)" }}>${s.value.toFixed(2)}</p>
-                  <p className="text-[12px] mt-1" style={{ color: "var(--text-tertiary)" }}>{s.label}</p>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-            <label className="block text-[14px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>
-              Daily budget limit
-            </label>
-            <p className="text-[12px] mb-3" style={{ color: "var(--text-tertiary)" }}>
-              Your co-founder will pause automatically when this limit is reached. Set to 0 for unlimited.
-            </p>
-            <div className="flex items-center gap-2">
-              <span className="text-[14px]" style={{ color: "var(--text-secondary)" }}>$</span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={budgetInput}
-                onChange={(e) => setBudgetInput(e.target.value)}
-                className="w-32 rounded-lg outline-none h-10 px-3"
-                style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)", color: "var(--text-primary)" }}
-              />
-              <button
-                onClick={async () => {
-                  const val = parseFloat(budgetInput) || 0;
-                  await updateDailyBudget(agent.id, val);
-                  onRefetch();
-                }}
-                className="h-10 px-4 rounded-lg text-[13px] font-medium cursor-pointer"
-                style={{ background: "var(--accent)", color: "white" }}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Git Tab */}
-      {activeTab === "git" && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Git Safety</h2>
-            <button
-              onClick={async () => { setGitStatus(null); gitGetStatus(agent.id).then(setGitStatus).catch(() => {}); }}
-              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium cursor-pointer"
-              style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
-            >
-              <RefreshCw size={13} /> Refresh
-            </button>
-          </div>
-          {gitStatus && !gitStatus.is_repo ? (
-            <div className="rounded-xl border p-8 flex flex-col items-center" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-              <GitBranch size={32} strokeWidth={1.5} className="mb-3" style={{ color: "var(--text-tertiary)" }} />
-              <p className="text-[14px] font-medium" style={{ color: "var(--text-secondary)" }}>Not a Git repository</p>
-              <p className="text-[13px] mt-1 text-center" style={{ color: "var(--text-tertiary)" }}>
-                Initialize a Git repository in your workspace to enable rollback and version history.
-              </p>
-            </div>
-          ) : gitStatus ? (
-            <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-xl border p-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>Branch</p>
-                  <p className="text-[14px] font-mono font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>{gitStatus.branch || "detached"}</p>
-                </div>
-                <div className="rounded-xl border p-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>Changed files</p>
-                  <p className="text-[14px] font-medium mt-0.5" style={{ color: "var(--text-primary)" }}>{gitStatus.changed_files ?? 0}</p>
-                </div>
-                <div className="rounded-xl border p-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>HEAD</p>
-                  <p className="text-[14px] font-mono font-medium mt-0.5 truncate" style={{ color: "var(--text-primary)" }}>{gitStatus.head?.slice(0, 8) ?? "—"}</p>
-                </div>
-              </div>
-
-              {gitStatus.changes && gitStatus.changes.length > 0 && (
-                <div className="rounded-xl border p-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <p className="text-[13px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>Changes</p>
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {gitStatus.changes.map((c, i) => (
-                      <div key={i} className="flex items-center gap-2 text-[13px] font-mono">
-                        <span className="w-5 text-center font-medium" style={{ color: c.status === "M" ? "var(--status-working)" : c.status === "A" || c.status === "?" ? "var(--status-active)" : "var(--status-error)" }}>{c.status}</span>
-                        <span style={{ color: "var(--text-secondary)" }}>{c.file}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    const diff = await gitGetDiff(agent.id);
-                    setGitDiff(diff || "No changes.");
-                  }}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium cursor-pointer"
-                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
-                >
-                  <Eye size={14} /> View diff
-                </button>
-                <button
-                  disabled={undoing}
-                  onClick={async () => {
-                    const confirmed = window.confirm("Undo the last session? This will hard reset to the pre-session commit.");
-                    if (!confirmed) return;
-                    setUndoing(true);
-                    try {
-                      const msg = await gitUndoLastSession(agent.id);
-                      window.alert(msg);
-                      gitGetStatus(agent.id).then(setGitStatus).catch(() => {});
-                    } catch (e) { window.alert(`Undo failed: ${e instanceof Error ? e.message : String(e)}`); }
-                    setUndoing(false);
-                  }}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg text-[13px] font-medium cursor-pointer disabled:opacity-50"
-                  style={{ background: "color-mix(in srgb, var(--status-error) 10%, transparent)", color: "var(--status-error)", border: "1px solid var(--status-error)" }}
-                >
-                  <Undo2 size={14} /> {undoing ? "Undoing..." : "Undo last session"}
-                </button>
-              </div>
-
-              {gitDiff !== null && (
-                <div className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: "var(--border-default)" }}>
-                    <span className="text-[13px] font-medium" style={{ color: "var(--text-primary)" }}>Diff</span>
-                    <button onClick={() => setGitDiff(null)} className="text-[12px] cursor-pointer" style={{ color: "var(--text-tertiary)" }}>Close</button>
-                  </div>
-                  <pre className="p-3 text-[12px] font-mono overflow-auto max-h-96 whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{gitDiff}</pre>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>Loading...</p>
-          )}
-        </div>
-      )}
-
-      {/* Tasks Tab */}
-      {activeTab === "tasks" && (
-        <div className="space-y-4">
-          <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Task Board</h2>
-          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-            Your co-founder manages its own task list in TASKS.md. Move tasks between columns here.
-          </p>
-          {taskBoard ? (
-            <div className="grid grid-cols-4 gap-3">
-              {taskBoard.columns.map((col) => (
-                <div key={col.column} className="rounded-xl border p-3 min-h-[200px]" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-[13px] font-semibold" style={{ color: "var(--text-primary)" }}>{col.column}</h3>
-                    <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{col.tasks.length}</span>
-                  </div>
-                  <div className="space-y-2">
-                    {col.tasks.map((task, i) => (
-                      <div key={i} className="group rounded-lg border p-2 text-[13px]" style={{ background: "var(--bg-app)", borderColor: "var(--border-default)", color: "var(--text-secondary)" }}>
-                        <p className="leading-snug">{task}</p>
-                        <div className="flex gap-1 mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          {taskBoard.columns
-                            .filter((c) => c.column !== col.column)
-                            .map((target) => (
-                              <button
-                                key={target.column}
-                                onClick={async () => {
-                                  await moveTask(agent.id, task, col.column, target.column);
-                                  getTaskBoard(agent.id).then(setTaskBoard).catch(() => {});
-                                }}
-                                className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer flex items-center gap-0.5"
-                                style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}
-                                title={`Move to ${target.column}`}
-                              >
-                                <ArrowRight size={9} /> {target.column}
-                              </button>
-                            ))}
-                        </div>
-                      </div>
-                    ))}
-                    {col.tasks.length === 0 && (
-                      <p className="text-[12px] text-center py-4" style={{ color: "var(--text-tertiary)" }}>Empty</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>Loading...</p>
-          )}
-        </div>
-      )}
-
-      {/* Schedule Tab */}
+      {/* ===== SCHEDULE TAB ===== */}
       {activeTab === "schedule" && (
         <div className="space-y-5">
           <div className="flex items-center justify-between">
@@ -1359,9 +1031,7 @@ export default function AgentDetailView({
                 <div className="flex flex-col gap-1">
                   <label className="text-[12px] font-medium" style={{ color: "var(--text-tertiary)" }}>Time</label>
                   <input
-                    type="time"
-                    value={newScheduleTime}
-                    onChange={(e) => setNewScheduleTime(e.target.value)}
+                    type="time" value={newScheduleTime} onChange={(e) => setNewScheduleTime(e.target.value)}
                     className="h-9 px-2.5 rounded-lg text-[14px] outline-none"
                     style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)", color: "var(--text-primary)" }}
                   />
@@ -1369,9 +1039,7 @@ export default function AgentDetailView({
                 <div className="flex-1 flex flex-col gap-1">
                   <label className="text-[12px] font-medium" style={{ color: "var(--text-tertiary)" }}>What should happen</label>
                   <input
-                    type="text"
-                    value={newScheduleAction}
-                    onChange={(e) => setNewScheduleAction(e.target.value)}
+                    type="text" value={newScheduleAction} onChange={(e) => setNewScheduleAction(e.target.value)}
                     placeholder="e.g. Send me a status update, Check analytics, Email leads..."
                     className="h-9 px-2.5 rounded-lg text-[14px] outline-none w-full"
                     style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)", color: "var(--text-primary)" }}
@@ -1396,14 +1064,7 @@ export default function AgentDetailView({
                 <button
                   onClick={async () => {
                     if (!newScheduleAction.trim()) return;
-                    const entry: ScheduleEntry = {
-                      id: crypto.randomUUID(),
-                      time: newScheduleTime,
-                      action: newScheduleAction.trim(),
-                      recurrence: newScheduleRecurrence,
-                      source: "user",
-                      enabled: true,
-                    };
+                    const entry: ScheduleEntry = { id: crypto.randomUUID(), time: newScheduleTime, action: newScheduleAction.trim(), recurrence: newScheduleRecurrence, source: "user", enabled: true };
                     await saveScheduleEntry(agent.id, entry);
                     setScheduleEntries(await getSchedule(agent.id));
                     setNewScheduleAction("");
@@ -1411,16 +1072,11 @@ export default function AgentDetailView({
                   }}
                   className="h-9 px-4 rounded-lg text-[13px] font-medium cursor-pointer"
                   style={{ background: "var(--accent)", color: "white" }}
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => setShowAddSchedule(false)}
+                >Save</button>
+                <button onClick={() => setShowAddSchedule(false)}
                   className="h-9 px-4 rounded-lg text-[13px] font-medium cursor-pointer"
                   style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
-                >
-                  Cancel
-                </button>
+                >Cancel</button>
               </div>
             </div>
           )}
@@ -1440,20 +1096,10 @@ export default function AgentDetailView({
                 const [h, m] = entry.time.split(":").map(Number);
                 const isPast = now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
                 const recurrenceLabel = { once: "One time", daily: "Daily", weekdays: "Weekdays", weekly: "Weekly" }[entry.recurrence] ?? entry.recurrence;
-
                 return (
-                  <div
-                    key={entry.id}
-                    className="rounded-xl border p-3 flex items-center gap-3 group"
-                    style={{
-                      background: "var(--bg-surface)",
-                      borderColor: entry.enabled ? "var(--border-default)" : "var(--border-subtle)",
-                      opacity: entry.enabled ? 1 : 0.5,
-                    }}
-                  >
-                    <div className="text-[15px] font-mono font-semibold tabular-nums w-14 shrink-0" style={{ color: isPast && entry.enabled ? "var(--accent)" : "var(--text-primary)" }}>
-                      {entry.time}
-                    </div>
+                  <div key={entry.id} className="rounded-xl border p-3 flex items-center gap-3 group"
+                    style={{ background: "var(--bg-surface)", borderColor: entry.enabled ? "var(--border-default)" : "var(--border-subtle)", opacity: entry.enabled ? 1 : 0.5 }}>
+                    <div className="text-[15px] font-mono font-semibold tabular-nums w-14 shrink-0" style={{ color: isPast && entry.enabled ? "var(--accent)" : "var(--text-primary)" }}>{entry.time}</div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] leading-snug truncate" style={{ color: "var(--text-primary)" }}>{entry.action}</p>
                       <div className="flex items-center gap-2 mt-0.5">
@@ -1461,32 +1107,16 @@ export default function AgentDetailView({
                           {entry.source === "user" ? "You" : "Co-founder"}
                         </span>
                         <span className="text-[11px]" style={{ color: "var(--text-tertiary)" }}>{recurrenceLabel}</span>
-                        {isPast && entry.enabled && (
-                          <span className="text-[11px] font-medium" style={{ color: "var(--accent)" }}>Due</span>
-                        )}
+                        {isPast && entry.enabled && <span className="text-[11px] font-medium" style={{ color: "var(--accent)" }}>Due</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={async () => {
-                          await toggleScheduleEntry(agent.id, entry.id, !entry.enabled);
-                          setScheduleEntries(await getSchedule(agent.id));
-                        }}
-                        className="p-1.5 rounded-md cursor-pointer"
-                        style={{ color: "var(--text-tertiary)" }}
-                        title={entry.enabled ? "Disable" : "Enable"}
-                      >
+                      <button onClick={async () => { await toggleScheduleEntry(agent.id, entry.id, !entry.enabled); setScheduleEntries(await getSchedule(agent.id)); }}
+                        className="p-1.5 rounded-md cursor-pointer" style={{ color: "var(--text-tertiary)" }} title={entry.enabled ? "Disable" : "Enable"}>
                         {entry.enabled ? <Pause size={13} /> : <Play size={13} />}
                       </button>
-                      <button
-                        onClick={async () => {
-                          await deleteScheduleEntry(agent.id, entry.id);
-                          setScheduleEntries(await getSchedule(agent.id));
-                        }}
-                        className="p-1.5 rounded-md cursor-pointer"
-                        style={{ color: "var(--status-error)" }}
-                        title="Delete"
-                      >
+                      <button onClick={async () => { await deleteScheduleEntry(agent.id, entry.id); setScheduleEntries(await getSchedule(agent.id)); }}
+                        className="p-1.5 rounded-md cursor-pointer" style={{ color: "var(--status-error)" }} title="Delete">
                         <Trash size={13} />
                       </button>
                     </div>
@@ -1498,33 +1128,367 @@ export default function AgentDetailView({
         </div>
       )}
 
-      {/* Danger zone */}
-      <div style={{ marginTop: 32 }}>
-        <h2 className="text-[17px] font-semibold mb-3" style={{ color: "var(--status-error)" }}>Danger zone</h2>
-        <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-          <div className="flex items-center gap-3 mb-3">
+      {/* ===== SETTINGS TAB ===== */}
+      {activeTab === "settings" && (
+        <div className="space-y-3">
+
+          {/* ── Identity & Strategy ── */}
+          <details open className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-2 text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              <ChevronDown size={16} className="shrink-0 chevron-indicator" style={{ color: "var(--text-tertiary)" }} />
+              Identity & Strategy
+            </summary>
+            <div className="px-4 pb-4 space-y-5">
+              {/* Mission */}
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>Mission</span>
+                  <span className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)" }}>MISSION.md</span>
+                </div>
+                <p className="text-[12px] mb-2" style={{ color: "var(--text-tertiary)" }}>
+                  The north star. Defines what your co-founder is trying to achieve. Update when your goals or strategy change.
+                </p>
+                <textarea value={missionContent} onChange={(e) => setMissionContent(e.target.value)} rows={5}
+                  className="w-full rounded-lg p-3 text-[14px] font-mono resize-y"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none", minHeight: 80 }}
+                />
+                <button onClick={() => handleSaveFile("MISSION.md", missionContent)} disabled={fileSaving}
+                  className="mt-2 text-[13px] font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
+                  {fileSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>Personality</span>
+                  <span className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)" }}>SOUL.md</span>
+                </div>
+                <p className="text-[12px] mb-2" style={{ color: "var(--text-tertiary)" }}>
+                  Your co-founder's DNA — decision-making style, risk tolerance, communication tone. Rarely needs changing once set.
+                </p>
+                <textarea value={soulContent} onChange={(e) => setSoulContent(e.target.value)} rows={6}
+                  className="w-full rounded-lg p-3 text-[14px] font-mono resize-y"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none", minHeight: 100 }}
+                />
+                <button onClick={() => handleSaveFile("SOUL.md", soulContent)} disabled={fileSaving}
+                  className="mt-2 text-[13px] font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
+                  {fileSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>Memory</span>
+                  <span className="text-[11px] font-mono" style={{ color: "var(--text-tertiary)" }}>MEMORY.md</span>
+                </div>
+                <p className="text-[12px] mb-2" style={{ color: "var(--text-tertiary)" }}>
+                  Lessons learned, what worked, what failed. Your co-founder updates this automatically after each session — you can also edit it to correct course.
+                </p>
+                <textarea value={memoryContent} onChange={(e) => setMemoryContent(e.target.value)} rows={6}
+                  className="w-full rounded-lg p-3 text-[14px] font-mono resize-y"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none", minHeight: 100 }}
+                />
+                <button onClick={() => handleSaveFile("MEMORY.md", memoryContent)} disabled={fileSaving}
+                  className="mt-2 text-[13px] font-medium px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
+                  {fileSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[14px] font-medium" style={{ color: "var(--text-primary)" }}>Budget</span>
+                  {agent.daily_budget_usd > 0 && <span className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>${agent.daily_budget_usd}/day</span>}
+                </div>
+                <p className="text-[12px] mb-2" style={{ color: "var(--text-tertiary)" }}>
+                  Your co-founder will pause automatically when this limit is reached. Set to 0 for unlimited.
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[14px]" style={{ color: "var(--text-secondary)" }}>$</span>
+                  <input type="number" min={0} step={0.5} value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)}
+                    className="w-32 rounded-lg outline-none h-10 px-3"
+                    style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)", color: "var(--text-primary)" }}
+                  />
+                  <button
+                    onClick={async () => { const val = parseFloat(budgetInput) || 0; await updateDailyBudget(agent.id, val); onRefetch(); }}
+                    className="h-10 px-4 rounded-lg text-[13px] font-medium cursor-pointer"
+                    style={{ background: "var(--accent)", color: "white" }}
+                  >Save</button>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          {/* ── Environment Variables ── */}
+          <details className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-2 text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              <ChevronDown size={16} className="shrink-0 chevron-indicator" style={{ color: "var(--text-tertiary)" }} />
+              Environment Variables
+              {envVars.length > 0 && <span className="text-[11px] px-1.5 rounded-full font-semibold ml-1" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{envVars.length}</span>}
+            </summary>
+            <div className="px-4 pb-4 space-y-3">
+              <p className="text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+                Stored securely. Your co-founder can use these but they never appear in logs.
+              </p>
+              <div className="flex gap-2">
+                <input type="text" value={newEnvKey} onChange={(e) => setNewEnvKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))}
+                  placeholder="KEY_NAME" className="w-48 h-10 px-3 rounded-lg text-[14px] font-mono"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
+                />
+                <input type="password" value={newEnvValue} onChange={(e) => setNewEnvValue(e.target.value)}
+                  placeholder="value" className="flex-1 h-10 px-3 rounded-lg text-[14px] font-mono"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-primary)", border: "1px solid var(--border-default)", outline: "none" }}
+                />
+                <button onClick={handleAddEnvVar} disabled={!newEnvKey.trim()}
+                  className="h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ background: "var(--text-primary)", color: "var(--bg-base)" }}>Add</button>
+              </div>
+              {envVars.length > 0 && (
+                <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--border-default)" }}>
+                  {envVars.map((envVar, i) => (
+                    <div key={envVar.key} className="flex items-center gap-3 px-4 py-2.5" style={{ borderBottom: i < envVars.length - 1 ? "1px solid var(--border-default)" : "none" }}>
+                      <span className="font-mono text-[14px] font-medium shrink-0" style={{ color: "var(--text-primary)", minWidth: 160 }}>{envVar.key}</span>
+                      <span className="flex-1 font-mono text-[14px] truncate cursor-pointer flex items-center gap-1.5" style={{ color: "var(--text-secondary)" }}
+                        onClick={() => setRevealedKeys((prev) => { const next = new Set(prev); if (next.has(envVar.key)) next.delete(envVar.key); else next.add(envVar.key); return next; })}>
+                        {revealedKeys.has(envVar.key) ? <><EyeOff size={13} />{envVar.value}</> : <><Eye size={13} />{"••••••••"}</>}
+                      </span>
+                      <button onClick={() => handleDeleteEnvVar(envVar.key)} className="text-[13px] cursor-pointer shrink-0" style={{ color: "var(--status-error)" }}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </details>
+
+          {/* ── Integrations ── */}
+          <details className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-2 text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              <ChevronDown size={16} className="shrink-0 chevron-indicator" style={{ color: "var(--text-tertiary)" }} />
+              Integrations
+            </summary>
+            <div className="px-4 pb-4">
+              <IntegrationsPanel agentId={agent.id} />
+            </div>
+          </details>
+
+          {/* ── Git Safety ── */}
+          <details className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-2 text-[15px] font-semibold" style={{ color: "var(--text-primary)" }}>
+              <ChevronDown size={16} className="shrink-0 chevron-indicator" style={{ color: "var(--text-tertiary)" }} />
+              Git Safety
+            </summary>
+            <div className="px-4 pb-4 space-y-3">
+              {gitStatus && !gitStatus.is_repo ? (
+                <div className="text-center py-4">
+                  <GitBranch size={24} strokeWidth={1.5} className="mx-auto mb-2" style={{ color: "var(--text-tertiary)" }} />
+                  <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>Not a Git repository. Initialize one to enable rollback.</p>
+                </div>
+              ) : gitStatus ? (
+                <>
+                  <div className="flex items-center gap-4 text-[13px]" style={{ color: "var(--text-secondary)" }}>
+                    <span>Branch: <span className="font-mono font-medium">{gitStatus.branch || "detached"}</span></span>
+                    <span>{gitStatus.changed_files ?? 0} changed files</span>
+                    <span className="font-mono">{gitStatus.head?.slice(0, 8) ?? "—"}</span>
+                  </div>
+                  {gitStatus.changes && gitStatus.changes.length > 0 && (
+                    <div className="max-h-32 overflow-y-auto space-y-0.5">
+                      {gitStatus.changes.map((c, i) => (
+                        <div key={i} className="flex items-center gap-2 text-[13px] font-mono">
+                          <span className="w-5 text-center font-medium" style={{ color: c.status === "M" ? "var(--status-working)" : c.status === "A" || c.status === "?" ? "var(--status-active)" : "var(--status-error)" }}>{c.status}</span>
+                          <span style={{ color: "var(--text-secondary)" }}>{c.file}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button onClick={async () => { setGitStatus(null); gitGetStatus(agent.id).then(setGitStatus).catch(() => {}); }}
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium cursor-pointer"
+                      style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
+                      <RefreshCw size={13} /> Refresh
+                    </button>
+                    <button disabled={undoing}
+                      onClick={async () => {
+                        const confirmed = window.confirm("Undo the last session? This will hard reset to the pre-session commit.");
+                        if (!confirmed) return;
+                        setUndoing(true);
+                        try { const msg = await gitUndoLastSession(agent.id); window.alert(msg); gitGetStatus(agent.id).then(setGitStatus).catch(() => {}); }
+                        catch (e) { window.alert(`Undo failed: ${e instanceof Error ? e.message : String(e)}`); }
+                        setUndoing(false);
+                      }}
+                      className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium cursor-pointer disabled:opacity-50"
+                      style={{ background: "color-mix(in srgb, var(--status-error) 10%, transparent)", color: "var(--status-error)", border: "1px solid var(--status-error)" }}>
+                      <Undo2 size={14} /> {undoing ? "Undoing..." : "Undo last session"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>Loading...</p>
+              )}
+            </div>
+          </details>
+
+          {/* ── Danger Zone ── */}
+          <details className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--status-error)" }}>
+            <summary className="px-4 py-3 cursor-pointer select-none flex items-center gap-2 text-[15px] font-semibold" style={{ color: "var(--status-error)" }}>
+              <ChevronDown size={16} className="shrink-0 chevron-indicator" />
+              Danger Zone
+            </summary>
+            <div className="px-4 pb-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <button onClick={async () => { await clearAgentSessions(agent.id); setSessions([]); onRefetch(); }}
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg text-[13px] font-medium cursor-pointer"
+                  style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}>
+                  Clear session history
+                </button>
+                <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{sessions.length} session{sessions.length !== 1 ? "s" : ""}</span>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={removeFounderFiles} onChange={(e) => setRemoveFounderFiles(e.target.checked)} />
+                <span className="text-[14px]" style={{ color: "var(--text-secondary)" }}>Also remove `.founder` files from workspace</span>
+              </label>
+              <button onClick={handleDelete} disabled={deleting}
+                className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ background: "var(--status-error)", color: "white" }}>
+                <Trash2 size={15} strokeWidth={2} /> {deleting ? "Deleting..." : "Delete co-founder"}
+              </button>
+            </div>
+          </details>
+
+        </div>
+      )}
+
+      {/* ===== ARTIFACTS TAB (contextual) ===== */}
+      {activeTab === "artifacts" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Artifacts</h2>
+            <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{artifacts.length} artifact{artifacts.length !== 1 ? "s" : ""}</span>
+          </div>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Your co-founder can create artifacts — dashboards, metrics, checklists, and logs — to track progress.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {artifacts.map((artifact) => (
+              <div key={artifact.id} className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{artifact.type}</span>
+                  <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{formatRelativeTime(artifact.updated_at)}</span>
+                </div>
+                <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{artifact.title}</p>
+                {artifact.description && <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)" }}>{artifact.description}</p>}
+                {artifact.type === "metric" && artifact.data != null && (
+                  <div className="mt-3 text-[28px] font-bold tabular-nums" style={{ color: "var(--text-primary)" }}>
+                    {String((artifact.data as Record<string, unknown>)?.value ?? String(artifact.data))}
+                  </div>
+                )}
+                {artifact.type === "checklist" && Array.isArray(artifact.data) && (
+                  <ul className="mt-2 space-y-1">
+                    {(artifact.data as Array<{ label: string; done: boolean }>).slice(0, 5).map((item, i) => (
+                      <li key={i} className="flex items-center gap-2 text-[13px]" style={{ color: "var(--text-secondary)" }}>
+                        <span className="w-3.5 h-3.5 rounded border flex items-center justify-center text-[10px]"
+                          style={{ borderColor: "var(--border-default)", background: item.done ? "var(--status-active)" : "transparent", color: "white" }}>
+                          {item.done && "✓"}
+                        </span>
+                        {item.label}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {artifact.type === "markdown" && (
+                  <pre className="mt-2 text-[13px] font-mono whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>
+                    {truncate(String(artifact.data), 300)}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===== TOOLS TAB (contextual) ===== */}
+      {activeTab === "tools" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Co-Founder Toolbox</h2>
+            <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{tools.length} tool{tools.length !== 1 ? "s" : ""}</span>
+          </div>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            Tools your co-founder has built for itself. These compound over time.
+          </p>
+          <div className="flex flex-col gap-3">
+            {tools.map((tool) => (
+              <div key={tool.name} className="rounded-xl border p-4 flex items-start gap-3" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+                <Hammer size={18} className="shrink-0 mt-0.5" style={{ color: "var(--text-secondary)" }} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{tool.name}</span>
+                    <span className="px-2 py-0.5 rounded text-[11px] font-mono" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{tool.language}</span>
+                    {tool.approved
+                      ? <span className="px-2 py-0.5 rounded text-[11px] font-medium" style={{ background: "color-mix(in srgb, var(--status-active) 12%, transparent)", color: "var(--status-active)" }}>Approved</span>
+                      : <span className="px-2 py-0.5 rounded text-[11px] font-medium" style={{ background: "color-mix(in srgb, var(--status-paused) 12%, transparent)", color: "var(--status-paused)" }}>Pending</span>}
+                  </div>
+                  <p className="text-[13px] mt-1" style={{ color: "var(--text-secondary)" }}>{tool.description}</p>
+                  <div className="flex items-center gap-3 mt-2 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+                    <span>Used {tool.use_count}x</span>
+                    <span>Created {formatRelativeTime(tool.created_at)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ===== REPORTS TAB (contextual) ===== */}
+      {activeTab === "reports" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Daily Reports</h2>
             <button
-              onClick={async () => { await clearAgentSessions(agent.id); setSessions([]); onRefetch(); }}
-              className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer"
+              onClick={async () => {
+                setGeneratingReport(true);
+                try { await generateDailyReport(agent.id); const r = await getDailyReports(agent.id); setReports(r); } catch { /* ignore */ }
+                setGeneratingReport(false);
+              }}
+              disabled={generatingReport}
+              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[13px] font-medium cursor-pointer disabled:opacity-50"
               style={{ background: "var(--bg-inset)", color: "var(--text-secondary)", border: "1px solid var(--border-default)" }}
             >
-              Clear session history
+              <RefreshCw size={13} className={generatingReport ? "animate-spin" : ""} />
+              {generatingReport ? "Generating..." : "Generate now"}
             </button>
-            <span className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
-              {sessions.length} session{sessions.length !== 1 ? "s" : ""} stored
-            </span>
           </div>
-          <label className="flex items-center gap-2 mb-3 cursor-pointer">
-            <input type="checkbox" checked={removeFounderFiles} onChange={(e) => setRemoveFounderFiles(e.target.checked)} />
-            <span className="text-[14px]" style={{ color: "var(--text-secondary)" }}>Also remove `.founder` files from workspace</span>
-          </label>
-          <button onClick={handleDelete} disabled={deleting}
-            className="inline-flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ background: "var(--status-error)", color: "white" }}>
-            <Trash2 size={15} strokeWidth={2} /> {deleting ? "Deleting..." : "Delete co-founder"}
-          </button>
+          <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>
+            A summary of your co-founder's work is generated each morning at 8am.
+          </p>
+          <div className="flex flex-col gap-4">
+            {reports.map((report) => (
+              <details key={report.date} className="rounded-xl border overflow-hidden" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
+                <summary className="px-4 py-3 cursor-pointer flex items-center gap-2 select-none">
+                  <Clock size={14} style={{ color: "var(--text-tertiary)" }} />
+                  <span className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{report.date}</span>
+                </summary>
+                <div className="px-4 pb-4">
+                  <div className="prose prose-sm max-w-none text-[14px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+                    {report.content.split("\n").map((line, i) => {
+                      if (line.startsWith("# ")) return <h3 key={i} className="text-[16px] font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>{line.slice(2)}</h3>;
+                      if (line.startsWith("## ")) return <h4 key={i} className="text-[14px] font-semibold mt-3 mb-1" style={{ color: "var(--text-primary)" }}>{line.slice(3)}</h4>;
+                      if (line.startsWith("| ")) return <pre key={i} className="text-[13px] font-mono" style={{ color: "var(--text-secondary)" }}>{line}</pre>;
+                      if (line.startsWith("- ")) return <p key={i} className="ml-3 text-[13px]">{line}</p>;
+                      if (line.trim() === "") return <br key={i} />;
+                      return <p key={i} className="text-[13px]">{line}</p>;
+                    })}
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

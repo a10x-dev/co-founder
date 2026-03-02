@@ -12,11 +12,12 @@ pub struct Database {
 impl Database {
     pub fn new() -> Result<Self, String> {
         let data_dir = dirs_data_dir().ok_or("Cannot determine home directory")?;
-        std::fs::create_dir_all(&data_dir).map_err(|e| format!("Failed to create data dir: {e}"))?;
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| format!("Failed to create data dir: {e}"))?;
         let db_path = format!("{}/data.db", data_dir);
 
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {e}"))?;
+        let conn =
+            Connection::open(&db_path).map_err(|e| format!("Failed to open database: {e}"))?;
 
         let db = Database {
             conn: Mutex::new(conn),
@@ -334,8 +335,11 @@ impl Database {
 
     pub fn delete_agent(&self, id: &Uuid) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        conn.execute("DELETE FROM work_sessions WHERE agent_id = ?1", params![id.to_string()])
-            .map_err(|e| format!("Delete sessions error: {e}"))?;
+        conn.execute(
+            "DELETE FROM work_sessions WHERE agent_id = ?1",
+            params![id.to_string()],
+        )
+        .map_err(|e| format!("Delete sessions error: {e}"))?;
         conn.execute("DELETE FROM agents WHERE id = ?1", params![id.to_string()])
             .map_err(|e| format!("Delete error: {e}"))?;
         Ok(())
@@ -349,7 +353,11 @@ impl Database {
         self.get_work_sessions_with_limit(agent_id, 1000)
     }
 
-    fn get_work_sessions_with_limit(&self, agent_id: &Uuid, limit: u32) -> Result<Vec<WorkSessionLog>, String> {
+    fn get_work_sessions_with_limit(
+        &self,
+        agent_id: &Uuid,
+        limit: u32,
+    ) -> Result<Vec<WorkSessionLog>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
             .prepare(&format!("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT {limit}"))
@@ -466,7 +474,10 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_agent_env_vars_as_pairs(&self, agent_id: &Uuid) -> Result<Vec<(String, String)>, String> {
+    pub fn get_agent_env_vars_as_pairs(
+        &self,
+        agent_id: &Uuid,
+    ) -> Result<Vec<(String, String)>, String> {
         let vars = self.get_agent_env_vars(agent_id)?;
         Ok(vars.into_iter().map(|v| (v.key, v.value)).collect())
     }
@@ -490,11 +501,13 @@ impl Database {
 
     pub fn purge_old_sessions(&self, agent_id: &Uuid, keep: usize) -> Result<u64, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM work_sessions WHERE agent_id = ?1",
-            params![agent_id.to_string()],
-            |row| row.get(0),
-        ).map_err(|e| format!("Count error: {e}"))?;
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM work_sessions WHERE agent_id = ?1",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Count error: {e}"))?;
 
         if count as usize <= keep {
             return Ok(0);
@@ -513,11 +526,13 @@ impl Database {
         conn.execute(
             "DELETE FROM work_sessions WHERE agent_id = ?1",
             params![agent_id.to_string()],
-        ).map_err(|e| format!("Clear sessions error: {e}"))?;
+        )
+        .map_err(|e| format!("Clear sessions error: {e}"))?;
         conn.execute(
             "UPDATE agents SET total_sessions = 0 WHERE id = ?1",
             params![agent_id.to_string()],
-        ).map_err(|e| format!("Reset count error: {e}"))?;
+        )
+        .map_err(|e| format!("Reset count error: {e}"))?;
         Ok(())
     }
 
@@ -530,45 +545,62 @@ impl Database {
 
     pub fn get_daily_spend(&self, agent_id: &Uuid) -> Result<f64, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        let spend: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
-            params![agent_id.to_string(), format!("{}T00:00:00", today)],
-            |row| row.get(0),
-        ).map_err(|e| format!("Spend query error: {e}"))?;
+        let spend: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0.0)
+             FROM work_sessions
+             WHERE agent_id = ?1
+               AND date(started_at, 'localtime') = date('now', 'localtime')",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Spend query error: {e}"))?;
         Ok(spend)
     }
 
     pub fn get_spend_breakdown(&self, agent_id: &Uuid) -> Result<serde_json::Value, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
-        let now = chrono::Utc::now();
-        let today = now.format("%Y-%m-%dT00:00:00").to_string();
-        let week_ago = (now - chrono::Duration::days(7)).format("%Y-%m-%dT00:00:00").to_string();
-        let month_ago = (now - chrono::Duration::days(30)).format("%Y-%m-%dT00:00:00").to_string();
 
-        let daily: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
-            params![agent_id.to_string(), today],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        let daily: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0.0)
+             FROM work_sessions
+             WHERE agent_id = ?1
+               AND date(started_at, 'localtime') = date('now', 'localtime')",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
 
-        let weekly: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
-            params![agent_id.to_string(), week_ago],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        let weekly: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0.0)
+             FROM work_sessions
+             WHERE agent_id = ?1
+               AND datetime(started_at, 'localtime') >= datetime('now', 'localtime', '-7 days')",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
 
-        let monthly: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1 AND started_at >= ?2",
-            params![agent_id.to_string(), month_ago],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        let monthly: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0.0)
+             FROM work_sessions
+             WHERE agent_id = ?1
+               AND datetime(started_at, 'localtime') >= datetime('now', 'localtime', '-30 days')",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
 
-        let total: f64 = conn.query_row(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1",
-            params![agent_id.to_string()],
-            |row| row.get(0),
-        ).unwrap_or(0.0);
+        let total: f64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(cost_usd), 0.0) FROM work_sessions WHERE agent_id = ?1",
+                params![agent_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
 
         Ok(serde_json::json!({
             "daily": (daily * 100.0).round() / 100.0,

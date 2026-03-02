@@ -1,4 +1,4 @@
-use chrono::Utc;
+use chrono::{Datelike, Timelike, Utc};
 use uuid::Uuid;
 
 use crate::cli_adapter::{CliAdapter, TurnConfig, TurnError};
@@ -41,14 +41,23 @@ impl WorkSessionEngine {
                 .current_dir(&agent.workspace)
                 .output();
             let _ = std::process::Command::new("git")
-                .args(["commit", "-m", &format!("pre-session snapshot {}", &session_uuid.to_string()[..8]), "--allow-empty"])
+                .args([
+                    "commit",
+                    "-m",
+                    &format!("pre-session snapshot {}", &session_uuid.to_string()[..8]),
+                    "--allow-empty",
+                ])
                 .current_dir(&agent.workspace)
                 .output();
         }
 
         let soul_content = StateManager::get_soul_content(&agent.workspace, &agent.personality);
         let mission_file = StateManager::read_mission(&agent.workspace);
-        let mission_content = if mission_file.trim().is_empty() { &agent.mission } else { &mission_file };
+        let mission_content = if mission_file.trim().is_empty() {
+            &agent.mission
+        } else {
+            &mission_file
+        };
         let state_content = StateManager::read_state(&agent.workspace);
         let memory_content = StateManager::read_memory(&agent.workspace);
         let inbox_content = StateManager::read_inbox(&agent.workspace);
@@ -56,7 +65,9 @@ impl WorkSessionEngine {
         let schedule_content = StateManager::read_schedule(&agent.workspace);
         let artifacts_summary = StateManager::read_artifacts_summary(&agent.workspace);
         let tools_summary = StateManager::read_tools_summary(&agent.workspace);
-        let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
+        let env_vars = db
+            .get_agent_env_vars_as_pairs(&agent.id)
+            .unwrap_or_default();
         let skip_perms = agent.autonomy_level == crate::models::AutonomyLevel::Yolo;
 
         let now = Utc::now();
@@ -70,7 +81,10 @@ impl WorkSessionEngine {
             .last_heartbeat_at
             .as_ref()
             .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
-            .map(|last| now.signed_duration_since(last.with_timezone(&chrono::Utc)).num_hours())
+            .map(|last| {
+                now.signed_duration_since(last.with_timezone(&chrono::Utc))
+                    .num_hours()
+            })
             .unwrap_or(0);
 
         let is_review_time = hours_since_last_session >= 20 || agent.total_sessions == 0;
@@ -105,9 +119,7 @@ impl WorkSessionEngine {
         prompt_parts.push(format!("\n## Your Mission\n{}", mission_content));
         prompt_parts.push(format!("\n## Current State\n{}", state_content));
 
-        if !tasks_content.trim().is_empty()
-            && tasks_content.trim() != default_empty_tasks()
-        {
+        if !tasks_content.trim().is_empty() && tasks_content.trim() != default_empty_tasks() {
             prompt_parts.push(format!("\n## Tasks\n{}", tasks_content));
         }
 
@@ -115,25 +127,75 @@ impl WorkSessionEngine {
             let local_now = chrono::Local::now();
             let current_time = local_now.format("%H:%M").to_string();
             let current_day = local_now.format("%A").to_string();
+            let current_minutes = (local_now.hour() * 60 + local_now.minute()) as u16;
 
             let mut due_items = Vec::new();
             let mut upcoming_items = Vec::new();
+            let mut fired_once_ids: Vec<String> = Vec::new();
             for line in schedule_content.lines() {
                 let trimmed = line.trim();
-                if !trimmed.starts_with("- ") { continue; }
+                if !trimmed.starts_with("- ") {
+                    continue;
+                }
+
                 let parts: Vec<&str> = trimmed[2..].split('|').map(|s| s.trim()).collect();
-                if parts.len() < 5 { continue; }
-                if parts.len() > 4 && parts[4] == "false" { continue; }
+                if parts.len() < 5 {
+                    continue;
+                }
+
+                let enabled = parts[4] != "false";
+                if !enabled {
+                    continue;
+                }
+
                 let entry_time = parts[0];
                 let action = parts[1];
-                if entry_time <= current_time.as_str() {
-                    due_items.push(format!("- **{}** — {} (DUE NOW)", entry_time, action));
+                let recurrence = parts[2];
+                let entry_id = if parts.len() > 5 { parts[5] } else { "" };
+                let last_run = if parts.len() > 6 && !parts[6].is_empty() {
+                    Some(parts[6])
                 } else {
-                    upcoming_items.push(format!("- {} — {}", entry_time, action));
+                    None
+                };
+                let day_of_week = if parts.len() > 7 {
+                    parts[7].parse::<u8>().ok()
+                } else {
+                    None
+                };
+
+                if !is_schedule_entry_active_today(recurrence, day_of_week, last_run, &local_now) {
+                    continue;
+                }
+
+                let Some(entry_minutes) = parse_hhmm_minutes(entry_time) else {
+                    continue;
+                };
+
+                let recurrence_label = recurrence_label(recurrence);
+                if entry_minutes <= current_minutes {
+                    due_items.push(format!(
+                        "- **{}** — {} ({}, DUE NOW)",
+                        entry_time, action, recurrence_label
+                    ));
+                    if recurrence == "once" && !entry_id.is_empty() {
+                        fired_once_ids.push(entry_id.to_string());
+                    }
+                } else {
+                    upcoming_items.push(format!(
+                        "- {} — {} ({})",
+                        entry_time, action, recurrence_label
+                    ));
                 }
             }
 
-            let mut schedule_section = format!("\n## Today's Schedule ({})\nCurrent time: {}\n", current_day, current_time);
+            if !fired_once_ids.is_empty() {
+                mark_once_entries_as_run(&agent.workspace, &fired_once_ids);
+            }
+
+            let mut schedule_section = format!(
+                "\n## Today's Schedule ({})\nCurrent time: {}\n",
+                current_day, current_time
+            );
             if !due_items.is_empty() {
                 schedule_section.push_str("\n### Due / Overdue\n");
                 schedule_section.push_str(&due_items.join("\n"));
@@ -145,7 +207,9 @@ impl WorkSessionEngine {
                 schedule_section.push('\n');
             }
             if !due_items.is_empty() {
-                schedule_section.push_str("\nIMPORTANT: Handle DUE items before regular tasks. They are commitments.\n");
+                schedule_section.push_str(
+                    "\nIMPORTANT: Handle DUE items before regular tasks. They are commitments.\n",
+                );
             }
             schedule_section.push_str("\nYou can add your own schedule entries by writing to `.founder/SCHEDULE.md`.\nFormat: `- HH:MM | action | recurrence | cofounder | true`\n");
             prompt_parts.push(schedule_section);
@@ -169,8 +233,7 @@ impl WorkSessionEngine {
             prompt_parts.push(format!("\n## Your Memory\n{}", mem_tail));
         }
 
-        let has_inbox = !inbox_content.trim().is_empty()
-            && inbox_content.contains("---");
+        let has_inbox = !inbox_content.trim().is_empty() && inbox_content.contains("---");
         if has_inbox {
             prompt_parts.push(format!(
                 "\n## Pending Messages from Your Human Partner (INBOX)\n{}\n\nIMPORTANT: Address these messages first. After handling, remove them from .founder/INBOX.md.",
@@ -263,7 +326,10 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     cost_usd: 0.0,
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, requested_next_checkin_secs: None });
+                return Ok(SessionResult {
+                    log,
+                    requested_next_checkin_secs: None,
+                });
             }
         };
 
@@ -292,20 +358,26 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 cost_usd: cost,
             };
             db.log_work_session(&log)?;
-            return Ok(SessionResult { log, requested_next_checkin_secs: requested });
+            return Ok(SessionResult {
+                log,
+                requested_next_checkin_secs: requested,
+            });
         }
 
         let session_start = std::time::Instant::now();
 
         while turns < max_turns {
-            let _ = app_handle.emit("agent-output", serde_json::json!({
-                "agent_id": agent.id.to_string(),
-                "type": "turn_progress",
-                "turn": turns,
-                "max_turns": max_turns,
-                "elapsed_secs": session_start.elapsed().as_secs(),
-                "max_duration_secs": agent.max_session_duration_secs,
-            }));
+            let _ = app_handle.emit(
+                "agent-output",
+                serde_json::json!({
+                    "agent_id": agent.id.to_string(),
+                    "type": "turn_progress",
+                    "turn": turns,
+                    "max_turns": max_turns,
+                    "elapsed_secs": session_start.elapsed().as_secs(),
+                    "max_duration_secs": agent.max_session_duration_secs,
+                }),
+            );
 
             if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
                 let requested = parse_next_checkin(&all_text);
@@ -326,7 +398,10 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     cost_usd: cost,
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, requested_next_checkin_secs: requested });
+                return Ok(SessionResult {
+                    log,
+                    requested_next_checkin_secs: requested,
+                });
             }
 
             let sid = match &final_session_id {
@@ -337,7 +412,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             let resume_config = TurnConfig {
                 agent_id: agent.id.to_string(),
                 workspace: agent.workspace.clone(),
-                prompt: "Continue working. If done, say so and include your NEXT_CHECKIN directive.".to_string(),
+                prompt: "Continue working on the highest-impact task. Start your response with exactly one line: `SESSION_STATUS: CONTINUE` or `SESSION_STATUS: DONE`. Use `DONE` only when this work session should end now. If blocked, explain why. Include your NEXT_CHECKIN directive at the end.".to_string(),
                 soul_content: None,
                 resume_session_id: Some(sid),
                 allowed_tools: agent.allowed_tools.clone(),
@@ -355,10 +430,10 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     all_text.push_str(&turn_result.text_output);
 
                     let output_lower = turn_result.text_output.to_lowercase();
-                    if output_lower.contains("done") || output_lower.contains("complete") || output_lower.contains("finished") {
-                        break;
-                    }
-                    if output_lower.contains("blocked") || output_lower.contains("stuck") || output_lower.contains("cannot proceed") {
+                    if output_lower.contains("blocked")
+                        || output_lower.contains("stuck")
+                        || output_lower.contains("cannot proceed")
+                    {
                         let requested = parse_next_checkin(&all_text);
                         let (it, ot, cost) = parse_token_usage(&all_events);
                         let log = WorkSessionLog {
@@ -377,7 +452,13 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                             cost_usd: cost,
                         };
                         db.log_work_session(&log)?;
-                        return Ok(SessionResult { log, requested_next_checkin_secs: requested });
+                        return Ok(SessionResult {
+                            log,
+                            requested_next_checkin_secs: requested,
+                        });
+                    }
+                    if parse_session_status(&turn_result.text_output) == Some(SessionStatus::Done) {
+                        break;
                     }
                 }
                 Err(turn_err) => {
@@ -402,7 +483,10 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         cost_usd: cost,
                     };
                     db.log_work_session(&log)?;
-                    return Ok(SessionResult { log, requested_next_checkin_secs: None });
+                    return Ok(SessionResult {
+                        log,
+                        requested_next_checkin_secs: None,
+                    });
                 }
             }
         }
@@ -425,8 +509,103 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             cost_usd: cost,
         };
         db.log_work_session(&log)?;
-        Ok(SessionResult { log, requested_next_checkin_secs: requested })
+        Ok(SessionResult {
+            log,
+            requested_next_checkin_secs: requested,
+        })
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SessionStatus {
+    Continue,
+    Done,
+}
+
+fn parse_session_status(text: &str) -> Option<SessionStatus> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let upper = trimmed.to_ascii_uppercase();
+        let Some(rest) = upper.strip_prefix("SESSION_STATUS:") else {
+            continue;
+        };
+        let status = rest.trim();
+        if status == "DONE" {
+            return Some(SessionStatus::Done);
+        }
+        if status == "CONTINUE" {
+            return Some(SessionStatus::Continue);
+        }
+    }
+    None
+}
+
+fn parse_hhmm_minutes(time_str: &str) -> Option<u16> {
+    let mut parts = time_str.split(':');
+    let hour = parts.next()?.parse::<u16>().ok()?;
+    let minute = parts.next()?.parse::<u16>().ok()?;
+    if parts.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(hour * 60 + minute)
+}
+
+fn recurrence_label(recurrence: &str) -> &'static str {
+    match recurrence {
+        "once" => "one-time",
+        "daily" => "daily",
+        "weekdays" => "weekdays",
+        "weekly" => "weekly",
+        _ => "custom",
+    }
+}
+
+fn is_schedule_entry_active_today(
+    recurrence: &str,
+    day_of_week: Option<u8>,
+    last_run: Option<&str>,
+    now: &chrono::DateTime<chrono::Local>,
+) -> bool {
+    match recurrence {
+        "once" => last_run.is_none(),
+        "daily" => true,
+        "weekdays" => matches!(
+            now.weekday(),
+            chrono::Weekday::Mon
+                | chrono::Weekday::Tue
+                | chrono::Weekday::Wed
+                | chrono::Weekday::Thu
+                | chrono::Weekday::Fri
+        ),
+        "weekly" => {
+            let today = now.weekday().num_days_from_sunday() as u8;
+            day_of_week.map(|d| d == today).unwrap_or(true)
+        }
+        _ => true,
+    }
+}
+
+fn mark_once_entries_as_run(workspace: &str, ids: &[String]) {
+    let schedule = StateManager::read_schedule(workspace);
+    let now_stamp = Utc::now().to_rfc3339();
+    let mut updated_lines = Vec::new();
+    for line in schedule.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- ") {
+            let parts: Vec<&str> = trimmed[2..].split('|').map(|s| s.trim()).collect();
+            if parts.len() > 5 && ids.contains(&parts[5].to_string()) {
+                let mut new_parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+                while new_parts.len() < 7 {
+                    new_parts.push(String::new());
+                }
+                new_parts[6] = now_stamp.clone();
+                updated_lines.push(format!("- {}", new_parts.join(" | ")));
+                continue;
+            }
+        }
+        updated_lines.push(line.to_string());
+    }
+    let _ = StateManager::write_schedule(workspace, &updated_lines.join("\n"));
 }
 
 /// Parse `NEXT_CHECKIN: Xm` or `NEXT_CHECKIN: Xh` from agent output
@@ -466,8 +645,13 @@ fn parse_token_usage(events: &[crate::cli_adapter::StreamEvent]) -> (u64, u64, f
             }
         }
     }
-    let cost = (input_tokens as f64 * 3.0 / 1_000_000.0) + (output_tokens as f64 * 15.0 / 1_000_000.0);
-    (input_tokens, output_tokens, (cost * 10000.0).round() / 10000.0)
+    let cost =
+        (input_tokens as f64 * 3.0 / 1_000_000.0) + (output_tokens as f64 * 15.0 / 1_000_000.0);
+    (
+        input_tokens,
+        output_tokens,
+        (cost * 10000.0).round() / 10000.0,
+    )
 }
 
 fn serialize_events(events: &[crate::cli_adapter::StreamEvent]) -> String {

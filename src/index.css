@@ -66,3 +66,8 @@ html, body, #root {
   background: var(--accent);
   color: white;
 }
+
+details > summary { list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary .chevron-indicator { transition: transform 150ms ease-out; }
+details[open] > summary .chevron-indicator { transform: rotate(180deg); }

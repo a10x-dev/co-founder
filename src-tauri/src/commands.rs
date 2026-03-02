@@ -1,7 +1,7 @@
-use chrono::Utc;
+use chrono::{Datelike, Utc};
+use serde::Serialize;
 use serde_json::Value;
 use std::fs;
-use serde::Serialize;
 use tauri::Emitter;
 use uuid::Uuid;
 
@@ -242,8 +242,8 @@ pub async fn read_text_file(
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
     let expanded = expand_home(&path);
-    let canonical = std::fs::canonicalize(&expanded)
-        .map_err(|e| format!("Could not read file: {e}"))?;
+    let canonical =
+        std::fs::canonicalize(&expanded).map_err(|e| format!("Could not read file: {e}"))?;
     let workspace = std::fs::canonicalize(&agent.workspace)
         .map_err(|e| format!("Could not resolve workspace path: {e}"))?;
 
@@ -345,12 +345,14 @@ pub async fn inspect_project_folder(path: String) -> Result<FolderInspectionResp
         ("pubspec.yaml", "Flutter"),
     ];
 
-    let detected_type = markers
-        .iter()
-        .find_map(|(filename, label)| {
-            let marker = project.join(filename);
-            if marker.exists() { Some((*label).to_string()) } else { None }
-        });
+    let detected_type = markers.iter().find_map(|(filename, label)| {
+        let marker = project.join(filename);
+        if marker.exists() {
+            Some((*label).to_string())
+        } else {
+            None
+        }
+    });
 
     let already_has_founder = project.join(".founder").join("MISSION.md").exists();
     let readme_summary = project.join("README.md");
@@ -364,7 +366,11 @@ pub async fn inspect_project_folder(path: String) -> Result<FolderInspectionResp
                     .take(3)
                     .collect::<Vec<_>>()
                     .join(" ");
-                if summary.is_empty() { None } else { Some(summary) }
+                if summary.is_empty() {
+                    None
+                } else {
+                    Some(summary)
+                }
             }
             Err(_) => None,
         }
@@ -391,11 +397,9 @@ pub async fn trigger_manual_session(
     if agent.status != AgentStatus::Running {
         let _ = state.db.reset_consecutive_errors(&uuid);
         state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
-        state.heartbeat.start_agent_heartbeat(
-            id.clone(),
-            agent.checkin_interval_secs,
-            app.clone(),
-        );
+        state
+            .heartbeat
+            .start_agent_heartbeat(id.clone(), agent.checkin_interval_secs, app.clone());
     }
 
     let payload = serde_json::json!({
@@ -415,12 +419,16 @@ pub async fn send_message_to_agent(
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let inbox_path = format!("{}/.founder/INBOX.md", agent.workspace.trim_end_matches('/'));
+    let inbox_path = format!(
+        "{}/.founder/INBOX.md",
+        agent.workspace.trim_end_matches('/')
+    );
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
 
     let entry = format!("\n---\n**[{}]** {}\n", now, message);
 
-    let existing = fs::read_to_string(&inbox_path).unwrap_or_else(|_| "# Inbox\n\nMessages from the user.\n".to_string());
+    let existing = fs::read_to_string(&inbox_path)
+        .unwrap_or_else(|_| "# Inbox\n\nMessages from the user.\n".to_string());
     let updated = format!("{}{}", existing, entry);
     fs::write(&inbox_path, updated).map_err(|e| format!("Failed to write INBOX.md: {e}"))?;
     Ok(())
@@ -470,7 +478,10 @@ pub async fn read_artifacts_manifest(
 ) -> Result<String, String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let manifest_path = format!("{}/.founder/artifacts/manifest.json", agent.workspace.trim_end_matches('/'));
+    let manifest_path = format!(
+        "{}/.founder/artifacts/manifest.json",
+        agent.workspace.trim_end_matches('/')
+    );
     fs::read_to_string(&manifest_path).map_err(|_| "No artifacts manifest found".into())
 }
 
@@ -481,7 +492,10 @@ pub async fn read_tools_manifest(
 ) -> Result<String, String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let manifest_path = format!("{}/.founder/tools/manifest.json", agent.workspace.trim_end_matches('/'));
+    let manifest_path = format!(
+        "{}/.founder/tools/manifest.json",
+        agent.workspace.trim_end_matches('/')
+    );
     fs::read_to_string(&manifest_path).map_err(|_| "No tools manifest found".into())
 }
 
@@ -510,7 +524,11 @@ pub async fn get_daily_reports(
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("md") {
                 if let Ok(content) = fs::read_to_string(&path) {
-                    let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                    let filename = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
                     reports.push(serde_json::json!({
                         "date": filename,
                         "content": content,
@@ -519,7 +537,12 @@ pub async fn get_daily_reports(
             }
         }
     }
-    reports.sort_by(|a, b| b["date"].as_str().unwrap_or("").cmp(a["date"].as_str().unwrap_or("")));
+    reports.sort_by(|a, b| {
+        b["date"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(a["date"].as_str().unwrap_or(""))
+    });
     Ok(reports)
 }
 
@@ -543,7 +566,14 @@ pub async fn clone_agent(
     // Copy .founder files from source to new workspace
     let source_founder = format!("{}/.founder", source.workspace.trim_end_matches('/'));
     let dest_founder = format!("{}/.founder", workspace.trim_end_matches('/'));
-    for filename in &["SOUL.md", "MISSION.md", "MEMORY.md", "STATE.md", "HEARTBEAT.md", "INBOX.md"] {
+    for filename in &[
+        "SOUL.md",
+        "MISSION.md",
+        "MEMORY.md",
+        "STATE.md",
+        "HEARTBEAT.md",
+        "INBOX.md",
+    ] {
         let src_path = format!("{}/{}", source_founder, filename);
         let dest_path = format!("{}/{}", dest_founder, filename);
         if let Ok(content) = fs::read_to_string(&src_path) {
@@ -584,7 +614,9 @@ pub async fn clone_agent(
     // Copy env vars
     if let Ok(env_vars) = state.db.get_agent_env_vars(&uuid) {
         for ev in env_vars {
-            let _ = state.db.set_agent_env_var(&new_agent.id, &ev.key, &ev.value);
+            let _ = state
+                .db
+                .set_agent_env_var(&new_agent.id, &ev.key, &ev.value);
         }
     }
 
@@ -601,9 +633,7 @@ pub async fn clear_agent_sessions(
 }
 
 #[tauri::command]
-pub async fn get_db_size(
-    state: tauri::State<'_, AppState>,
-) -> Result<u64, String> {
+pub async fn get_db_size(state: tauri::State<'_, AppState>) -> Result<u64, String> {
     state.db.get_db_size_bytes()
 }
 
@@ -635,12 +665,19 @@ pub async fn save_integration(
     let mcp_path = format!("{}/.mcp.json", agent.workspace.trim_end_matches('/'));
 
     let mut mcp: Value = match fs::read_to_string(&mcp_path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({"mcpServers": {}})),
+        Ok(content) => {
+            serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({"mcpServers": {}}))
+        }
         Err(_) => serde_json::json!({"mcpServers": {}}),
     };
 
-    let servers = mcp.as_object_mut()
-        .and_then(|o| o.entry("mcpServers").or_insert_with(|| serde_json::json!({})).as_object_mut())
+    let servers = mcp
+        .as_object_mut()
+        .and_then(|o| {
+            o.entry("mcpServers")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+        })
         .ok_or("Invalid .mcp.json structure")?;
 
     let server_config = serde_json::json!({
@@ -655,7 +692,8 @@ pub async fn save_integration(
 
     servers.insert(server_key, server_config);
 
-    let json_str = serde_json::to_string_pretty(&mcp).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    let json_str = serde_json::to_string_pretty(&mcp)
+        .map_err(|e| format!("JSON serialization failed: {e}"))?;
     fs::write(&mcp_path, json_str).map_err(|e| format!("Failed to write .mcp.json: {e}"))?;
     Ok(())
 }
@@ -671,13 +709,15 @@ pub async fn remove_integration(
     let mcp_path = format!("{}/.mcp.json", agent.workspace.trim_end_matches('/'));
 
     let content = fs::read_to_string(&mcp_path).map_err(|_| "No .mcp.json found")?;
-    let mut mcp: Value = serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let mut mcp: Value =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     if let Some(servers) = mcp.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
         servers.remove(&server_key);
     }
 
-    let json_str = serde_json::to_string_pretty(&mcp).map_err(|e| format!("JSON serialization failed: {e}"))?;
+    let json_str = serde_json::to_string_pretty(&mcp)
+        .map_err(|e| format!("JSON serialization failed: {e}"))?;
     fs::write(&mcp_path, json_str).map_err(|e| format!("Failed to write .mcp.json: {e}"))?;
     Ok(())
 }
@@ -719,7 +759,10 @@ pub async fn git_create_branch(
 ) -> Result<String, String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let branch_name = format!("agent-founder/{}", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+    let branch_name = format!(
+        "agent-founder/{}",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
 
     let output = std::process::Command::new("git")
         .args(["checkout", "-b", &branch_name])
@@ -728,7 +771,10 @@ pub async fn git_create_branch(
         .map_err(|e| format!("Git error: {e}"))?;
 
     if !output.status.success() {
-        return Err(format!("Git branch creation failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "Git branch creation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(branch_name)
 }
@@ -768,7 +814,8 @@ pub async fn git_get_status(
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
 
-    let changes: Vec<Value> = status.lines()
+    let changes: Vec<Value> = status
+        .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| {
             let status_code = l.get(..2).unwrap_or("??").trim().to_string();
@@ -827,7 +874,10 @@ pub async fn git_rollback(
         .map_err(|e| format!("Git error: {e}"))?;
 
     if !output.status.success() {
-        return Err(format!("Git rollback failed: {}", String::from_utf8_lossy(&output.stderr)));
+        return Err(format!(
+            "Git rollback failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     }
     Ok(())
 }
@@ -866,10 +916,16 @@ pub async fn git_undo_last_session(
         .map_err(|e| format!("Git error: {e}"))?;
 
     if !reset.status.success() {
-        return Err(format!("Git reset failed: {}", String::from_utf8_lossy(&reset.stderr)));
+        return Err(format!(
+            "Git reset failed: {}",
+            String::from_utf8_lossy(&reset.stderr)
+        ));
     }
 
-    Ok(format!("Rolled back to commit {}", &commit[..8.min(commit.len())]))
+    Ok(format!(
+        "Rolled back to commit {}",
+        &commit[..8.min(commit.len())]
+    ))
 }
 
 // --- Task Board ---
@@ -881,11 +937,17 @@ pub async fn get_task_board(
 ) -> Result<Value, String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let tasks_path = format!("{}/.founder/TASKS.md", agent.workspace.trim_end_matches('/'));
+    let tasks_path = format!(
+        "{}/.founder/TASKS.md",
+        agent.workspace.trim_end_matches('/')
+    );
 
-    let content = fs::read_to_string(&tasks_path).unwrap_or_else(|_| "# Tasks\n\n## In Progress\n\n\n## To Do\n\n\n## Done\n\n\n## Blocked".to_string());
+    let content = fs::read_to_string(&tasks_path).unwrap_or_else(|_| {
+        "# Tasks\n\n## In Progress\n\n\n## To Do\n\n\n## Done\n\n\n## Blocked".to_string()
+    });
 
-    let mut columns: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut columns: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     let mut current_col = String::new();
 
     for line in content.lines() {
@@ -901,12 +963,15 @@ pub async fn get_task_board(
     }
 
     let col_order = ["In Progress", "To Do", "Done", "Blocked"];
-    let board: Vec<Value> = col_order.iter().map(|col| {
-        serde_json::json!({
-            "column": col,
-            "tasks": columns.get(*col).cloned().unwrap_or_default(),
+    let board: Vec<Value> = col_order
+        .iter()
+        .map(|col| {
+            serde_json::json!({
+                "column": col,
+                "tasks": columns.get(*col).cloned().unwrap_or_default(),
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(serde_json::json!({ "columns": board }))
 }
@@ -921,7 +986,10 @@ pub async fn move_task(
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
-    let tasks_path = format!("{}/.founder/TASKS.md", agent.workspace.trim_end_matches('/'));
+    let tasks_path = format!(
+        "{}/.founder/TASKS.md",
+        agent.workspace.trim_end_matches('/')
+    );
 
     let content = fs::read_to_string(&tasks_path).unwrap_or_default();
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
@@ -932,7 +1000,11 @@ pub async fn move_task(
         if line.starts_with("## ") {
             in_from = line[3..].trim() == from_column;
         }
-        if in_from && (line.starts_with("- ") || line.starts_with("* ")) && line[2..].trim() == task && !removed {
+        if in_from
+            && (line.starts_with("- ") || line.starts_with("* "))
+            && line[2..].trim() == task
+            && !removed
+        {
             removed = true;
             return false;
         }
@@ -951,6 +1023,10 @@ pub async fn move_task(
             new_lines.push(format!("- {}", task));
             inserted = true;
         }
+    }
+
+    if !inserted {
+        return Err(format!("Destination column not found: {to_column}"));
     }
 
     fs::write(&tasks_path, new_lines.join("\n"))
@@ -974,12 +1050,28 @@ fn parse_schedule(content: &str) -> Vec<ScheduleEntry> {
     let mut entries = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if !trimmed.starts_with("- ") { continue; }
+        if !trimmed.starts_with("- ") {
+            continue;
+        }
         let parts: Vec<&str> = trimmed[2..].split('|').map(|s| s.trim()).collect();
-        if parts.len() < 5 { continue; }
-        let id = if parts.len() > 5 { parts[5].to_string() } else { uuid::Uuid::new_v4().to_string() };
-        let last_run = if parts.len() > 6 { Some(parts[6].to_string()) } else { None };
-        let day_of_week = if parts.len() > 7 { parts[7].parse().ok() } else { None };
+        if parts.len() < 5 {
+            continue;
+        }
+        let id = if parts.len() > 5 {
+            parts[5].to_string()
+        } else {
+            uuid::Uuid::new_v4().to_string()
+        };
+        let last_run = if parts.len() > 6 {
+            Some(parts[6].to_string())
+        } else {
+            None
+        };
+        let day_of_week = if parts.len() > 7 {
+            parts[7].parse().ok()
+        } else {
+            None
+        };
         entries.push(ScheduleEntry {
             id,
             time: parts[0].to_string(),
@@ -999,7 +1091,11 @@ fn serialize_schedule(entries: &[ScheduleEntry]) -> String {
     for e in entries {
         out.push_str(&format!(
             "- {} | {} | {} | {} | {} | {} | {} | {}\n",
-            e.time, e.action, e.recurrence, e.source, e.enabled,
+            e.time,
+            e.action,
+            e.recurrence,
+            e.source,
+            e.enabled,
             e.id,
             e.last_run.as_deref().unwrap_or(""),
             e.day_of_week.map_or(String::new(), |d| d.to_string()),
@@ -1027,12 +1123,25 @@ pub async fn save_schedule_entry(
 ) -> Result<(), String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
+    let mut normalized_entry = entry;
+    if normalized_entry.recurrence == "weekly" {
+        if normalized_entry.day_of_week.is_none() {
+            normalized_entry.day_of_week =
+                Some(chrono::Local::now().weekday().num_days_from_sunday() as u8);
+        }
+    } else {
+        normalized_entry.day_of_week = None;
+    }
+    if normalized_entry.recurrence != "once" {
+        normalized_entry.last_run = None;
+    }
+
     let content = StateManager::read_schedule(&agent.workspace);
     let mut entries = parse_schedule(&content);
-    if let Some(existing) = entries.iter_mut().find(|e| e.id == entry.id) {
-        *existing = entry;
+    if let Some(existing) = entries.iter_mut().find(|e| e.id == normalized_entry.id) {
+        *existing = normalized_entry;
     } else {
-        entries.push(entry);
+        entries.push(normalized_entry);
     }
     entries.sort_by(|a, b| a.time.cmp(&b.time));
     StateManager::write_schedule(&agent.workspace, &serialize_schedule(&entries))
@@ -1047,7 +1156,10 @@ pub async fn delete_schedule_entry(
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
     let content = StateManager::read_schedule(&agent.workspace);
-    let entries: Vec<ScheduleEntry> = parse_schedule(&content).into_iter().filter(|e| e.id != entry_id).collect();
+    let entries: Vec<ScheduleEntry> = parse_schedule(&content)
+        .into_iter()
+        .filter(|e| e.id != entry_id)
+        .collect();
     StateManager::write_schedule(&agent.workspace, &serialize_schedule(&entries))
 }
 

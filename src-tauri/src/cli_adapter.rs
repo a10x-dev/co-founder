@@ -1,7 +1,7 @@
+use crate::process_pool::ProcessPool;
 use std::io::BufRead;
 use std::process::{Command, Stdio};
 use tauri::{AppHandle, Emitter};
-use crate::process_pool::ProcessPool;
 
 fn redact_secrets(text: &str, secrets: &[(String, String)]) -> String {
     let mut result = text.to_string();
@@ -128,14 +128,17 @@ impl CliAdapter {
                                 classified
                             );
                             if let Some(handle) = app_handle {
-                                let _ = handle.emit("agent-output", serde_json::json!({
-                                    "agent_id": config.agent_id,
-                                    "type": "retry",
-                                    "attempt": attempt + 1,
-                                    "max_retries": max_retries,
-                                    "delay_secs": delay,
-                                    "error": classified.to_string(),
-                                }));
+                                let _ = handle.emit(
+                                    "agent-output",
+                                    serde_json::json!({
+                                        "agent_id": config.agent_id,
+                                        "type": "retry",
+                                        "attempt": attempt + 1,
+                                        "max_retries": max_retries,
+                                        "delay_secs": delay,
+                                        "error": classified.to_string(),
+                                    }),
+                                );
                             }
                             std::thread::sleep(std::time::Duration::from_secs(delay));
                         }
@@ -186,7 +189,9 @@ impl CliAdapter {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn claude: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn claude: {e}"))?;
         let pid = child.id();
         if let Some(pool) = process_pool {
             pool.register(&config.agent_id, pid);
@@ -225,11 +230,14 @@ impl CliAdapter {
                 });
 
                 if let Some(handle) = app_handle {
-                    let _ = handle.emit("agent-output", serde_json::json!({
-                        "agent_id": config.agent_id,
-                        "type": event_type,
-                        "raw": safe_line,
-                    }));
+                    let _ = handle.emit(
+                        "agent-output",
+                        serde_json::json!({
+                            "agent_id": config.agent_id,
+                            "type": event_type,
+                            "raw": safe_line,
+                        }),
+                    );
                 }
 
                 if event_type == "result" {
@@ -254,7 +262,16 @@ impl CliAdapter {
                 let stderr = child.stderr.take();
                 let err_msg = if let Some(stderr) = stderr {
                     let reader = std::io::BufReader::new(stderr);
-                    reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
+                    let collected = reader
+                        .lines()
+                        .filter_map(|l| l.ok())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if collected.trim().is_empty() {
+                        format!("claude exited with status {status}")
+                    } else {
+                        collected
+                    }
                 } else {
                     format!("claude exited with status {status}")
                 };
@@ -279,10 +296,7 @@ impl CliAdapter {
 }
 
 pub fn detect_claude_path() -> Option<String> {
-    let output = Command::new("which")
-        .arg("claude")
-        .output()
-        .ok()?;
+    let output = Command::new("which").arg("claude").output().ok()?;
 
     if output.status.success() {
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -294,10 +308,7 @@ pub fn detect_claude_path() -> Option<String> {
 }
 
 pub fn get_claude_version() -> Option<String> {
-    let output = Command::new("claude")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = Command::new("claude").arg("--version").output().ok()?;
 
     if output.status.success() {
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
