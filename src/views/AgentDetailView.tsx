@@ -11,7 +11,7 @@ import {
   ShieldAlert,
   MessageCircle,
 } from "lucide-react";
-import type { Agent, AgentStatus, WorkSessionLog, WorkspaceHealth, Artifact, ToolManifestEntry, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, AgentEnvVar } from "@/types";
+import type { Agent, AgentStatus, WorkSessionLog, WorkspaceHealth, Artifact, ToolManifestEntry, GitStatus, TaskBoard, ScheduleEntry, AgentEnvVar } from "@/types";
 import {
   getWorkSessions,
   startAgent,
@@ -24,7 +24,6 @@ import {
   repairWorkspace,
   readArtifactsManifest,
   readToolsManifest,
-  getSpendBreakdown,
   gitGetStatus,
   getTaskBoard,
   getSchedule,
@@ -87,7 +86,7 @@ export interface AgentDetailViewProps {
   agent: Agent;
   onRefetch: () => void;
   onShareJourney: (agent: Agent) => Promise<void> | void;
-  onStartLiveSession: (agent: Agent) => Promise<void> | void;
+  onStartPair: (agent: Agent) => Promise<void> | void;
   onDeleted: () => void;
 }
 
@@ -97,7 +96,7 @@ export default function AgentDetailView({
   agent,
   onRefetch,
   onShareJourney,
-  onStartLiveSession,
+  onStartPair,
   onDeleted,
 }: AgentDetailViewProps) {
   const [sessions, setSessions] = useState<WorkSessionLog[]>([]);
@@ -124,7 +123,6 @@ export default function AgentDetailView({
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [tools, setTools] = useState<ToolManifestEntry[]>([]);
   const [reports, setReports] = useState<DailyReport[]>([]);
-  const [spend, setSpend] = useState<SpendBreakdown | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [taskBoard, setTaskBoard] = useState<TaskBoard | null>(null);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
@@ -136,7 +134,6 @@ export default function AgentDetailView({
     readArtifactsManifest(agent.id).then(setArtifacts).catch(() => setArtifacts([]));
     readToolsManifest(agent.id).then(setTools).catch(() => setTools([]));
     getDailyReports(agent.id).then(setReports).catch(() => setReports([]));
-    getSpendBreakdown(agent.id).then(setSpend).catch(() => {});
     getTaskBoard(agent.id).then(setTaskBoard).catch(() => {});
     gitGetStatus(agent.id).then(setGitStatus).catch(() => {});
     setLiveOutput([]);
@@ -173,11 +170,20 @@ export default function AgentDetailView({
       setSessionProgress(null);
       readArtifactsManifest(agent.id).then(setArtifacts).catch(() => {});
       readToolsManifest(agent.id).then(setTools).catch(() => {});
-      getSpendBreakdown(agent.id).then(setSpend).catch(() => {});
       onRefetch();
     }).then((fn) => { if (active) unlisten = fn; }).catch(() => {});
     return () => { active = false; if (unlisten) unlisten(); };
   }, [agent.id, onRefetch]);
+
+  // Session start time for elapsed timer
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!sessionStartTime || agent.status !== "running") return;
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - sessionStartTime) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [sessionStartTime, agent.status]);
 
   // Live output listener
   useEffect(() => {
@@ -202,39 +208,53 @@ export default function AgentDetailView({
         if (p.type === "tempo_change") {
           const secs = p.interval_secs ?? 0;
           const label = secs >= 3600 ? `${Math.floor(secs / 3600)}h` : `${Math.floor(secs / 60)}m`;
-          setLiveOutput((prev) => [...prev, { type: "tempo_change", message: `Tempo changed: next check-in in ${label}`, timestamp: Date.now() }]);
+          setLiveOutput((prev) => [...prev, { type: "tempo_change", message: `Next check-in in ${label}`, timestamp: Date.now() }]);
           return;
         }
 
+        // Skip assistant events — they're response text, not actionable status
+        if (p.type === "assistant") return;
+
         let message = "";
         if (p.type === "session_start") {
-          message = p.message || "Co-founder checking in...";
+          message = "Checking in...";
+          setSessionStartTime(Date.now());
+          setElapsed(0);
           setSessionProgress({ turn: 0, maxTurns: p.max_turns ?? 40, elapsedSecs: 0, maxDurationSecs: p.max_duration_secs ?? 1800 });
         } else if (p.type === "retry") {
-          message = `Retrying (${p.attempt}/${3})... waiting ${p.delay_secs}s`;
-        } else if (p.type === "assistant") {
-          try { const raw = JSON.parse(p.raw || "{}"); message = (raw.content as string)?.slice(0, 200) || "Thinking..."; } catch { message = "Thinking..."; }
+          message = `Retrying (${p.attempt}/3)... waiting ${p.delay_secs}s`;
         } else if (p.type === "tool_call") {
           try {
             const raw = JSON.parse(p.raw || "{}");
-            const tool = (raw.tool as string) || "tool";
+            const tool = ((raw.tool as string) || (raw.name as string) || "").toLowerCase();
             const input = raw.input as Record<string, unknown> | undefined;
-            if (tool.includes("write")) message = `Writing ${(input?.path as string) || "file"}...`;
-            else if (tool.includes("read")) message = `Reading ${(input?.path as string) || "file"}...`;
-            else if (tool.includes("bash")) message = `Running: ${((input?.command as string) || "command").slice(0, 100)}`;
-            else message = `Using tool: ${tool}`;
-          } catch { message = "Using a tool..."; }
+            const path = ((input?.file_path ?? input?.path ?? input?.file) as string) || "";
+            const shortPath = path.split("/").slice(-2).join("/");
+
+            if (tool.includes("write") || tool.includes("edit") || tool.includes("replace")) {
+              message = `Editing ${shortPath || "file"}`;
+            } else if (tool.includes("read")) {
+              message = `Reading ${shortPath || "file"}`;
+            } else if (tool.includes("bash") || tool.includes("shell") || tool.includes("command")) {
+              const cmd = ((input?.command as string) || "command").slice(0, 80);
+              message = `Running: ${cmd}`;
+            } else if (tool.includes("search") || tool.includes("grep") || tool.includes("find")) {
+              const query = (input?.pattern ?? input?.query ?? input?.search_term) as string;
+              message = query ? `Searching: ${query.slice(0, 60)}` : "Searching codebase";
+            } else if (tool.includes("list") || tool.includes("glob") || tool.includes("dir")) {
+              message = `Browsing ${shortPath || "files"}`;
+            } else if (tool.includes("web") || tool.includes("fetch") || tool.includes("curl")) {
+              message = "Fetching from web";
+            } else {
+              message = `Working (${tool.split("_").pop() || "tool"})`;
+            }
+          } catch { message = "Working..."; }
         } else if (p.type === "result") {
-          message = "Session turn complete.";
+          message = "Done";
+          setSessionStartTime(null);
         } else { return; }
 
-        setLiveOutput((prev) => {
-          const isThinking = p.type === "assistant" && (message === "Thinking..." || message.startsWith("Thinking"));
-          if (isThinking && prev.length > 0 && prev[prev.length - 1].type === "assistant" && prev[prev.length - 1].message.startsWith("Thinking")) {
-            return prev;
-          }
-          return [...prev, { type: p.type, message, timestamp: Date.now() }].slice(-50);
-        });
+        setLiveOutput((prev) => [...prev, { type: p.type, message, timestamp: Date.now() }].slice(-50));
       },
     ).then((fn) => { if (active) unlisten = fn; }).catch(() => {});
     return () => { active = false; if (unlisten) unlisten(); };
@@ -246,6 +266,18 @@ export default function AgentDetailView({
     requestAnimationFrame(() => {
       container.scrollTop = container.scrollHeight;
     });
+  }, [liveOutput]);
+
+  // Auto-clear feed 3s after "Done"
+  useEffect(() => {
+    if (liveOutput.length === 0) return;
+    const latest = liveOutput[liveOutput.length - 1];
+    if (latest.type !== "result") return;
+    const timer = setTimeout(() => {
+      setLiveOutput([]);
+      setSessionProgress(null);
+    }, 3000);
+    return () => clearTimeout(timer);
   }, [liveOutput]);
 
   const config = STATUS_CONFIG[agent.status];
@@ -277,10 +309,9 @@ export default function AgentDetailView({
   return (
     <div className="max-w-[860px] mx-auto" style={{ paddingLeft: 32, paddingRight: 32, paddingTop: 40, paddingBottom: 48 }}>
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-4">
+      <div className="flex items-start justify-between gap-4 mb-0">
         <div className="min-w-0">
           <h1 className="text-[28px] font-semibold" style={{ color: "var(--text-primary)" }}>{agent.name}</h1>
-          <p className="text-[15px] mt-0.5" style={{ color: "var(--text-secondary)" }}>{agent.mission}</p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <span
@@ -303,14 +334,18 @@ export default function AgentDetailView({
           <button onClick={handleRunNow} disabled={busy} className={ghostButton} style={{ color: "var(--text-secondary)", opacity: busy ? 0.6 : 1 }}>
             <Zap size={14} strokeWidth={2} /> Run Now
           </button>
-          <button onClick={() => void onStartLiveSession(agent)} className={ghostButton} style={{ color: "var(--text-secondary)" }}>
-            <MessageCircle size={14} strokeWidth={2} /> Start Live Session
+          <button onClick={() => void onStartPair(agent)} className={ghostButton} style={{ color: "var(--text-secondary)" }}>
+            <MessageCircle size={14} strokeWidth={2} /> Start Pair
           </button>
         </div>
       </div>
+      <div className="flex items-center mb-4">
+        <p className="text-[15px] mt-0.5 w-full" style={{ color: "var(--text-secondary)" }}>{agent.mission}</p>
+      </div>
+
 
       {/* Stats bar */}
-      <div className="flex items-center gap-3 flex-wrap pb-4" style={{ borderBottom: "1px solid var(--border-default)", paddingBottom: 16 }}>
+      <div className="flex items-center gap-3 flex-wrap pb-4" style={{ paddingBottom: 16 }}>
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[13px] font-medium" style={{ background: `color-mix(in srgb, ${config.color} 10%, transparent)`, color: config.color }}>
           <span className="w-1.5 h-1.5 rounded-full" style={{ background: config.color }} />
           {config.label}
@@ -368,47 +403,55 @@ export default function AgentDetailView({
         </div>
       )}
 
-      {/* Live output indicator */}
+      {/* Activity feed */}
       {agent.status === "running" && liveOutput.length > 0 && (() => {
         const latest = liveOutput[liveOutput.length - 1];
-        const latestMsg = latest.type === "session_start" ? "Checking in..."
-          : latest.type === "tool_call" ? latest.message
-          : latest.type === "assistant" ? latest.message
-          : latest.type === "retry" ? "Taking a short break, will retry..."
-          : latest.type === "tempo_change" ? latest.message
-          : latest.type === "result" ? "Finished this step"
-          : latest.message;
+        const isDone = latest.type === "result";
+        const elapsedLabel = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
+
         return (
           <div style={{ marginTop: 20 }}>
-            <div className="flex items-center gap-2.5 cursor-pointer group" onClick={() => setShowLive((v) => !v)} style={{ minHeight: 32 }}>
-              <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse shrink-0" style={{ background: "var(--status-active)" }} />
-              <span className="text-[14px] truncate flex-1 min-w-0" style={{ color: "var(--text-secondary)" }}>{latestMsg}</span>
-              {sessionProgress && (
-                <span className="text-[12px] font-mono shrink-0 flex items-center gap-2" style={{ color: "var(--text-tertiary)" }}>
-                  <span>{sessionProgress.turn}/{sessionProgress.maxTurns}</span>
-                  <span>{Math.floor(sessionProgress.elapsedSecs / 60)}:{String(sessionProgress.elapsedSecs % 60).padStart(2, "0")}</span>
-                  <div className="w-16 h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-inset)" }}>
+            <div
+              className="flex items-center gap-2.5 cursor-pointer select-none"
+              onClick={() => setShowLive((v) => !v)}
+              style={{ minHeight: 28 }}
+            >
+              <span
+                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${isDone ? "" : "animate-pulse"}`}
+                style={{ background: isDone ? "var(--text-tertiary)" : "var(--status-active)" }}
+              />
+              <span
+                className="text-[13px] truncate flex-1 min-w-0"
+                style={{ color: isDone ? "var(--text-tertiary)" : "var(--text-secondary)" }}
+              >
+                {latest.message}
+              </span>
+              {!isDone && sessionStartTime && (
+                <span className="text-[12px] font-mono shrink-0" style={{ color: "var(--text-tertiary)" }}>
+                  {elapsedLabel}
+                </span>
+              )}
+              {sessionProgress && !isDone && (
+                <span className="text-[11px] font-mono shrink-0 flex items-center gap-1.5" style={{ color: "var(--text-tertiary)" }}>
+                  <span>turn {sessionProgress.turn}/{sessionProgress.maxTurns}</span>
+                  <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-inset)" }}>
                     <div className="h-full rounded-full transition-all duration-500" style={{ background: "var(--status-active)", width: `${Math.min(100, (sessionProgress.turn / sessionProgress.maxTurns) * 100)}%` }} />
                   </div>
                 </span>
               )}
             </div>
-            {showLive && (
-              <div ref={liveContainerRef} className="mt-2 rounded-lg overflow-hidden" style={{ maxHeight: 200, overflowY: "auto", overflowAnchor: "none" }}>
-                <div className="space-y-0.5 pl-4">
-                  {liveOutput.slice(0, -1).map((entry, i) => {
-                    if (entry.type === "assistant" && entry.message.startsWith("Thinking")) return null;
-                    const msg = entry.type === "session_start" ? "Checking in..."
-                      : entry.type === "tool_call" ? entry.message
-                      : entry.type === "assistant" ? entry.message
-                      : entry.type === "retry" ? "Retrying..."
-                      : entry.type === "tempo_change" ? entry.message
-                      : entry.type === "result" ? "Finished this step"
-                      : entry.message;
-                    return (
-                      <div key={i} className="text-[13px] truncate" style={{ color: "var(--text-tertiary)", lineHeight: "24px" }}>{msg}</div>
-                    );
-                  })}
+            {showLive && liveOutput.length > 1 && (
+              <div ref={liveContainerRef} className="mt-1.5 overflow-hidden" style={{ maxHeight: 160, overflowY: "auto" }}>
+                <div className="pl-4 space-y-px">
+                  {liveOutput.slice(0, -1).map((entry, i) => (
+                    <div
+                      key={i}
+                      className="text-[12px] truncate"
+                      style={{ color: "var(--text-tertiary)", lineHeight: "22px" }}
+                    >
+                      {entry.message}
+                    </div>
+                  ))}
                   <div ref={liveEndRef} />
                 </div>
               </div>
@@ -443,7 +486,6 @@ export default function AgentDetailView({
         <OverviewTab
           agent={agent}
           sessions={sessions}
-          spend={spend}
           gitStatus={gitStatus}
           setGitStatus={setGitStatus}
           taskBoard={taskBoard}

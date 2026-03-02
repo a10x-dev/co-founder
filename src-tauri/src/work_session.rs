@@ -295,7 +295,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             allowed_tools: agent.allowed_tools.clone(),
             env_vars: env_vars.clone(),
             skip_permissions: skip_perms,
-            live_session_id: None,
+            pair_session_id: None,
         };
 
         let _ = app_handle.emit("agent-output", serde_json::json!({
@@ -424,7 +424,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 allowed_tools: agent.allowed_tools.clone(),
                 env_vars: env_vars.clone(),
                 skip_permissions: skip_perms,
-                live_session_id: None,
+                pair_session_id: None,
             };
 
             match cli.run_turn_with_retry(resume_config, Some(pool), Some(&app_handle), 2, None) {
@@ -521,7 +521,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         })
     }
 
-    pub async fn run_live_session(
+    pub async fn run_pair_session(
         cli: CliAdapter,
         agent: Agent,
         initial_message: String,
@@ -529,7 +529,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         pool: Arc<ProcessPool>,
         db: Arc<Database>,
         app_handle: AppHandle,
-        live_session_id: String,
+        pair_session_id: String,
         cancel: Arc<AtomicBool>,
     ) -> Result<WorkSessionLog, String> {
         let log_id = Uuid::new_v4();
@@ -548,28 +548,45 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
         let skip_perms = agent.autonomy_level == crate::models::AutonomyLevel::Yolo;
 
+        // Layer 2: Load recent pair history for context injection
+        let pair_history = db
+            .get_recent_pair_messages(&agent.id, 50)
+            .unwrap_or_default();
+
         let mut claude_session_id: Option<String> = None;
         let mut turns: u32 = 0;
         let mut all_events: Vec<crate::cli_adapter::StreamEvent> = Vec::new();
 
         let mut outcome = SessionOutcome::Completed;
-        let mut prompt = build_live_kickoff_prompt(
+        let mut prompt = build_pair_kickoff_prompt(
             &mission_content,
             &state_content,
             &memory_content,
             &initial_message,
+            &pair_history,
         );
+
+        // Layer 1: Persist initial user message if non-empty
+        if !initial_message.trim().is_empty() {
+            let _ = db.save_pair_message(
+                &agent.id,
+                &pair_session_id,
+                "user",
+                &initial_message,
+            );
+        }
+
         let in_progress_log = WorkSessionLog {
             id: log_id,
             agent_id: agent.id,
-            session_id: live_session_id.clone(),
-            mode: WorkSessionMode::Live,
+            session_id: pair_session_id.clone(),
+            mode: WorkSessionMode::Pair,
             started_at: started_at.clone(),
             ended_at: None,
             turns: 0,
             trigger: SessionTrigger::Manual,
             outcome: SessionOutcome::Completed,
-            summary: "Live session started".to_string(),
+            summary: "Pair session started".to_string(),
             events_json: "[]".to_string(),
             input_tokens: 0,
             output_tokens: 0,
@@ -581,18 +598,20 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             "agent-output",
             serde_json::json!({
                 "agent_id": agent.id.to_string(),
-                "session_id": live_session_id,
+                "session_id": pair_session_id,
                 "type": "session_start",
-                "message": "Live session started.",
+                "message": "Pair session started.",
                 "max_turns": 9999,
                 "max_duration_secs": agent.max_session_duration_secs,
             }),
         );
 
+        let mut user_ended = false;
+
         let summary = loop {
             if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
                 outcome = SessionOutcome::Timeout;
-                break "Live session timed out".to_string();
+                break "Pair session timed out".to_string();
             }
 
             let config = TurnConfig {
@@ -608,7 +627,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 allowed_tools: agent.allowed_tools.clone(),
                 env_vars: env_vars.clone(),
                 skip_permissions: skip_perms,
-                live_session_id: Some(live_session_id.clone()),
+                pair_session_id: Some(pair_session_id.clone()),
             };
 
             let cli_for_turn = cli.clone();
@@ -629,7 +648,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 Ok(result) => result,
                 Err(err) => {
                     outcome = SessionOutcome::Interrupted;
-                    break format!("Live session interrupted: {err}");
+                    break format!("Pair session interrupted: {err}");
                 }
             };
 
@@ -639,13 +658,24 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     if let Some(sid) = turn.session_id {
                         claude_session_id = Some(sid);
                     }
+
+                    // Layer 1: Persist agent response
+                    if !turn.text_output.trim().is_empty() {
+                        let _ = db.save_pair_message(
+                            &agent.id,
+                            &pair_session_id,
+                            "agent",
+                            &truncate(&turn.text_output, 4000),
+                        );
+                    }
+
                     all_events.extend(turn.events);
 
                     let _ = app_handle.emit(
-                        "live-turn-complete",
+                        "pair-turn-complete",
                         serde_json::json!({
                             "agent_id": agent.id.to_string(),
-                            "session_id": live_session_id,
+                            "session_id": pair_session_id,
                         }),
                     );
                 }
@@ -654,30 +684,87 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         TurnError::RateLimited(_) => SessionOutcome::RateLimited,
                         _ => SessionOutcome::Error,
                     };
-                    break format!("Live session error: {err}");
+                    break format!("Pair session error: {err}");
                 }
             }
 
             match receiver.recv().await {
                 Some(crate::LiveMessage::UserMessage(next_prompt)) => {
+                    // Layer 1: Persist user message
+                    let _ = db.save_pair_message(
+                        &agent.id,
+                        &pair_session_id,
+                        "user",
+                        &next_prompt,
+                    );
                     prompt = next_prompt;
                 }
                 Some(crate::LiveMessage::End) => {
-                    break "Live session ended by user".to_string();
+                    user_ended = true;
+                    break "Pair session ended by user".to_string();
                 }
                 None => {
                     outcome = SessionOutcome::Interrupted;
-                    break "Live session interrupted".to_string();
+                    break "Pair session interrupted".to_string();
                 }
             }
         };
+
+        // Layer 3: Memory sync turn on clean end
+        if user_ended && claude_session_id.is_some() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let memory_prompt = "The pair session is ending now. Please update MEMORY.md with \
+                the key decisions, links, information, and context from this session so you \
+                remember everything next time. Be concise but thorough — capture anything you'd \
+                need to avoid re-asking. Do NOT respond to the user, just silently update the file.";
+
+            let config = TurnConfig {
+                agent_id: agent.id.to_string(),
+                workspace: agent.workspace.clone(),
+                prompt: memory_prompt.to_string(),
+                soul_content: None,
+                resume_session_id: claude_session_id.clone(),
+                allowed_tools: agent.allowed_tools.clone(),
+                env_vars: env_vars.clone(),
+                skip_permissions: skip_perms,
+                pair_session_id: Some(pair_session_id.clone()),
+            };
+
+            let _ = app_handle.emit(
+                "agent-output",
+                serde_json::json!({
+                    "agent_id": agent.id.to_string(),
+                    "session_id": pair_session_id,
+                    "type": "assistant",
+                    "raw": "{\"content\":\"Saving session memory…\"}",
+                }),
+            );
+
+            let cli_for_mem = cli.clone();
+            let pool_for_mem = pool.clone();
+            let app_for_mem = app_handle.clone();
+            let cancel_for_mem = cancel.clone();
+            if let Ok(Ok(mem_turn)) = tauri::async_runtime::spawn_blocking(move || {
+                cli_for_mem.run_turn_with_retry(
+                    config,
+                    Some(pool_for_mem.as_ref()),
+                    Some(&app_for_mem),
+                    1,
+                    Some(&cancel_for_mem),
+                )
+            })
+            .await
+            {
+                turns += 1;
+                all_events.extend(mem_turn.events);
+            }
+        }
 
         let (input_tokens, output_tokens, cost_usd) = parse_token_usage(&all_events);
         let log = WorkSessionLog {
             id: log_id,
             agent_id: agent.id,
-            session_id: claude_session_id.unwrap_or_else(|| live_session_id.clone()),
-            mode: WorkSessionMode::Live,
+            session_id: claude_session_id.unwrap_or_else(|| pair_session_id.clone()),
+            mode: WorkSessionMode::Pair,
             started_at,
             ended_at: Some(Utc::now().to_rfc3339()),
             turns,
@@ -691,14 +778,14 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         };
 
         db.finalize_work_session(&log)?;
-        crate::cli_adapter::clear_live_preview_urls(&live_session_id);
+        crate::cli_adapter::clear_pair_preview_urls(&pair_session_id);
 
         let _ = app_handle.emit("session-completed", &log);
         let _ = app_handle.emit(
-            "live-session-ended",
+            "pair-session-ended",
             serde_json::json!({
                 "agent_id": agent.id.to_string(),
-                "session_id": live_session_id,
+                "session_id": pair_session_id,
                 "summary": summary,
             }),
         );
@@ -707,11 +794,12 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
     }
 }
 
-fn build_live_kickoff_prompt(
+fn build_pair_kickoff_prompt(
     mission: &str,
     state: &str,
     memory: &str,
     user_message: &str,
+    pair_history: &[(String, String, String)],
 ) -> String {
     let memory_tail = {
         let lines: Vec<&str> = memory.lines().collect();
@@ -722,8 +810,22 @@ fn build_live_kickoff_prompt(
         }
     };
 
+    let history_section = if pair_history.is_empty() {
+        String::new()
+    } else {
+        let mut buf = String::from("## Recent Pair Conversations\n");
+        buf.push_str("(These are messages from your recent pair sessions with your co-founder. Use this context to avoid re-asking questions.)\n\n");
+        for (role, content, timestamp) in pair_history {
+            let label = if role == "user" { "Co-Founder" } else { "You" };
+            let short_time = timestamp.get(..16).unwrap_or(timestamp);
+            buf.push_str(&format!("[{short_time}] **{label}**: {}\n", truncate(content, 500)));
+        }
+        buf.push('\n');
+        buf
+    };
+
     let request_section = if user_message.trim().is_empty() {
-        "Your co-founder just opened a live session. Greet them briefly, summarize where things \
+        "Your co-founder just started a pair session. Greet them briefly, summarize where things \
          stand right now, and ask what they'd like to work on together. Keep it concise and direct."
             .to_string()
     } else {
@@ -733,11 +835,12 @@ fn build_live_kickoff_prompt(
     };
 
     format!(
-        "You are in LIVE SYNC MODE with your human co-founder.\n\
+        "You are in PAIR MODE with your human co-founder.\n\
          Collaborate directly and execute immediately.\n\n\
          ## Mission\n{mission}\n\n\
          ## Current State\n{state}\n\n\
          ## Recent Memory\n{memory_tail}\n\n\
+         {history_section}\
          {request_section}"
     )
 }

@@ -8,7 +8,7 @@ export type SessionOutcome =
   | "error"
   | "rate_limited"
   | "interrupted";
-export type WorkSessionMode = "autonomous" | "live";
+export type WorkSessionMode = "autonomous" | "pair";
 
 export interface Agent {
   id: string;
@@ -65,23 +65,23 @@ export interface WorkSessionLog {
   cost_usd: number;
 }
 
-export interface LiveSessionStartResponse {
+export interface PairSessionStartResponse {
   agent_id: string;
   session_id: string;
 }
 
-export interface LiveTurnCompleteEvent {
+export interface PairTurnCompleteEvent {
   agent_id: string;
   session_id: string;
 }
 
-export interface LivePreviewDetectedEvent {
+export interface PairPreviewDetectedEvent {
   agent_id: string;
   session_id: string;
   url: string;
 }
 
-export interface LiveSessionEndedEvent {
+export interface PairSessionEndedEvent {
   agent_id: string;
   session_id: string;
   summary: string;

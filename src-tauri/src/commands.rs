@@ -1,5 +1,7 @@
+use base64::engine::general_purpose;
+use base64::Engine;
 use chrono::{Datelike, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +13,13 @@ use uuid::Uuid;
 use crate::cli_adapter::{detect_claude_path, get_claude_version};
 use crate::models::*;
 use crate::state_manager::StateManager;
-use crate::{AppState, LiveMessage, LiveSessionHandle};
+use crate::{AppState, LiveMessage, PairSessionHandle};
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct InboxImagePayload {
+    pub name: String,
+    pub data: String, // base64-encoded
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceHealthResponse {
@@ -29,7 +37,7 @@ pub struct FolderInspectionResponse {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct LiveSessionStartResponse {
+pub struct PairSessionStartResponse {
     pub agent_id: String,
     pub session_id: String,
 }
@@ -230,7 +238,7 @@ pub async fn delete_agent(
     state.heartbeat.stop_agent_heartbeat(&id);
     let _ = state.process_pool.kill_agent(&id);
 
-    if let Ok(mut sessions) = state.live_sessions.lock() {
+    if let Ok(mut sessions) = state.pair_sessions.lock() {
         if let Some(handle) = sessions.remove(&id) {
             handle.cancelled.store(true, Ordering::Relaxed);
             let _ = handle.sender.try_send(LiveMessage::End);
@@ -428,24 +436,24 @@ pub async fn trigger_manual_session(
 }
 
 #[tauri::command]
-pub async fn start_live_session(
+pub async fn start_pair_session(
     agent_id: String,
     message: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-) -> Result<LiveSessionStartResponse, String> {
+) -> Result<PairSessionStartResponse, String> {
     let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
     let agent = state.db.get_agent(&uuid)?;
 
-    let (receiver, live_session_id, cancelled) = {
+    let (receiver, pair_session_id, cancelled) = {
         let mut sessions = state
-            .live_sessions
+            .pair_sessions
             .lock()
-            .map_err(|e| format!("Live session lock error: {e}"))?;
+            .map_err(|e| format!("Pair session lock error: {e}"))?;
 
         if let Some(handle) = sessions.get(&agent_id) {
             if !handle.sender.is_closed() {
-                return Ok(LiveSessionStartResponse {
+                return Ok(PairSessionStartResponse {
                     agent_id,
                     session_id: handle.session_id.clone(),
                 });
@@ -462,7 +470,7 @@ pub async fn start_live_session(
         let cancelled = Arc::new(AtomicBool::new(false));
         sessions.insert(
             agent_id.clone(),
-            LiveSessionHandle {
+            PairSessionHandle {
                 sender,
                 session_id: session_id.clone(),
                 cancelled: cancelled.clone(),
@@ -481,13 +489,13 @@ pub async fn start_live_session(
     let db = state.db.clone();
     let pool = state.process_pool.clone();
     let heartbeat = state.heartbeat.clone();
-    let live_sessions = state.live_sessions.clone();
+    let pair_sessions = state.pair_sessions.clone();
     let app_handle = app.clone();
     let agent_id_for_task = agent_id.clone();
-    let session_id_for_task = live_session_id.clone();
+    let session_id_for_task = pair_session_id.clone();
 
     tauri::async_runtime::spawn(async move {
-        let run_result = crate::work_session::WorkSessionEngine::run_live_session(
+        let run_result = crate::work_session::WorkSessionEngine::run_pair_session(
             cli,
             agent,
             message,
@@ -499,9 +507,9 @@ pub async fn start_live_session(
             cancelled,
         )
         .await;
-        crate::cli_adapter::clear_live_preview_urls(&session_id_for_task);
+        crate::cli_adapter::clear_pair_preview_urls(&session_id_for_task);
 
-        if let Ok(mut sessions) = live_sessions.lock() {
+        if let Ok(mut sessions) = pair_sessions.lock() {
             let should_remove = sessions
                 .get(&agent_id_for_task)
                 .map(|h| h.session_id == session_id_for_task)
@@ -513,11 +521,11 @@ pub async fn start_live_session(
 
         if run_result.is_err() {
             let _ = app_handle.emit(
-                "live-session-ended",
+                "pair-session-ended",
                 serde_json::json!({
                     "agent_id": agent_id_for_task,
                     "session_id": session_id_for_task,
-                    "summary": "Live session ended due to an unexpected runtime error.",
+                    "summary": "Pair session ended due to an unexpected runtime error.",
                 }),
             );
         }
@@ -529,14 +537,14 @@ pub async fn start_live_session(
         }
     });
 
-    Ok(LiveSessionStartResponse {
+    Ok(PairSessionStartResponse {
         agent_id,
-        session_id: live_session_id,
+        session_id: pair_session_id,
     })
 }
 
 #[tauri::command]
-pub async fn send_live_message(
+pub async fn send_pair_message(
     agent_id: String,
     session_id: String,
     message: String,
@@ -548,14 +556,14 @@ pub async fn send_live_message(
 
     let sender = {
         let sessions = state
-            .live_sessions
+            .pair_sessions
             .lock()
-            .map_err(|e| format!("Live session lock error: {e}"))?;
+            .map_err(|e| format!("Pair session lock error: {e}"))?;
         let handle = sessions
             .get(&agent_id)
-            .ok_or("No active live session for this co-founder")?;
+            .ok_or("No active pair session for this co-founder")?;
         if handle.session_id != session_id {
-            return Err("Session mismatch — this live session is no longer active".to_string());
+            return Err("Session mismatch — this pair session is no longer active".to_string());
         }
         handle.sender.clone()
     };
@@ -563,11 +571,11 @@ pub async fn send_live_message(
     sender
         .send(LiveMessage::UserMessage(message))
         .await
-        .map_err(|_| "Live session is no longer available".to_string())
+        .map_err(|_| "Pair session is no longer available".to_string())
 }
 
 #[tauri::command]
-pub async fn end_live_session(
+pub async fn end_pair_session(
     agent_id: String,
     session_id: String,
     continue_autonomous: Option<bool>,
@@ -580,14 +588,14 @@ pub async fn end_live_session(
 
     let sender = {
         let mut sessions = state
-            .live_sessions
+            .pair_sessions
             .lock()
-            .map_err(|e| format!("Live session lock error: {e}"))?;
+            .map_err(|e| format!("Pair session lock error: {e}"))?;
         let handle = sessions
             .get(&agent_id)
-            .ok_or("No active live session for this co-founder")?;
+            .ok_or("No active pair session for this co-founder")?;
         if handle.session_id != session_id {
-            return Err("Session mismatch — this live session is no longer active".to_string());
+            return Err("Session mismatch — this pair session is no longer active".to_string());
         }
         handle.cancelled.store(true, Ordering::Relaxed);
         let sender = handle.sender.clone();
@@ -609,7 +617,7 @@ pub async fn end_live_session(
         let payload = serde_json::json!({
             "agent_id": agent_id,
             "timestamp": Utc::now().to_rfc3339(),
-            "reason": "live-end",
+            "reason": "pair-end",
         });
         let _ = app.emit("heartbeat-tick", payload);
     } else {
@@ -640,6 +648,40 @@ pub async fn send_message_to_agent(
     let updated = format!("{}{}", existing, entry);
     fs::write(&inbox_path, updated).map_err(|e| format!("Failed to write INBOX.md: {e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn save_inbox_images(
+    agent_id: String,
+    images: Vec<InboxImagePayload>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let dir = format!(
+        "{}/.founder/inbox-images",
+        agent.workspace.trim_end_matches('/')
+    );
+    fs::create_dir_all(&dir).map_err(|e| format!("Failed to create inbox-images dir: {e}"))?;
+
+    let mut paths = Vec::new();
+    for img in &images {
+        let data = general_purpose::STANDARD
+            .decode(&img.data)
+            .map_err(|e| format!("Invalid base64: {e}"))?;
+        let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+        let ext = img
+            .name
+            .rsplit('.')
+            .next()
+            .unwrap_or("png")
+            .to_lowercase();
+        let filename = format!("{ts}.{ext}");
+        let path = format!("{dir}/{filename}");
+        fs::write(&path, &data).map_err(|e| format!("Failed to write image: {e}"))?;
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 #[tauri::command]

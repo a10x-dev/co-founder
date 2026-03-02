@@ -127,14 +127,14 @@ impl SessionOutcome {
 #[serde(rename_all = "lowercase")]
 pub enum WorkSessionMode {
     Autonomous,
-    Live,
+    Pair,
 }
 
 impl fmt::Display for WorkSessionMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WorkSessionMode::Autonomous => write!(f, "autonomous"),
-            WorkSessionMode::Live => write!(f, "live"),
+            WorkSessionMode::Pair => write!(f, "pair"),
         }
     }
 }
@@ -142,7 +142,7 @@ impl fmt::Display for WorkSessionMode {
 impl WorkSessionMode {
     pub fn from_str(s: &str) -> Self {
         match s {
-            "live" => WorkSessionMode::Live,
+            "pair" => WorkSessionMode::Pair,
             _ => WorkSessionMode::Autonomous,
         }
     }

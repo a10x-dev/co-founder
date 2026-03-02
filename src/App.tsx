@@ -8,21 +8,21 @@ import ImportAgentView from "@/views/ImportAgentView";
 import JourneyExportView from "@/views/JourneyExportView";
 import OnboardingView from "@/views/OnboardingView";
 import SettingsView from "@/views/SettingsView";
-import LiveSessionView from "@/views/LiveSessionView";
+import PairView from "@/views/PairView";
 import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
 import {
   detectClaudeCli,
   getGlobalSettings,
   getWorkSessionsExport,
-  startLiveSession,
-  endLiveSession as endLiveSessionApi,
+  startPairSession,
+  endPairSession as endPairSessionApi,
 } from "@/lib/api";
-import type { Agent, LiveSessionEndedEvent, WorkSessionLog } from "@/types";
+import type { Agent, PairSessionEndedEvent, WorkSessionLog } from "@/types";
 
-type View = "home" | "create" | "import" | "settings" | "journey" | "live";
+type View = "home" | "create" | "import" | "settings" | "journey" | "pair";
 
-interface LiveSessionState {
+interface PairSessionState {
   agentId: string;
   sessionId: string;
 }
@@ -34,7 +34,7 @@ export default function App() {
     agent: Agent;
     sessions: WorkSessionLog[];
   } | null>(null);
-  const [liveSession, setLiveSession] = useState<LiveSessionState | null>(null);
+  const [pairSession, setPairSession] = useState<PairSessionState | null>(null);
   const [cliWarning, setCliWarning] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
@@ -53,58 +53,58 @@ export default function App() {
     return () => window.removeEventListener("keydown", handler);
   }, [toggleSidebar]);
 
-  const liveSessionRef = useRef(liveSession);
-  liveSessionRef.current = liveSession;
+  const pairSessionRef = useRef(pairSession);
+  pairSessionRef.current = pairSession;
 
-  const cleanupLiveIfActive = useCallback(async () => {
-    const prev = liveSessionRef.current;
+  const cleanupPairIfActive = useCallback(async () => {
+    const prev = pairSessionRef.current;
     if (!prev) return;
-    setLiveSession(null);
+    setPairSession(null);
     try {
-      await endLiveSessionApi(prev.agentId, prev.sessionId, true);
+      await endPairSessionApi(prev.agentId, prev.sessionId, true);
     } catch {
       // best-effort
     }
   }, []);
 
   const handleSelectAgent = (id: string) => {
-    void cleanupLiveIfActive();
+    void cleanupPairIfActive();
     setSelectedAgentId(id);
     setView("home");
   };
 
   const handleHome = () => {
-    void cleanupLiveIfActive();
+    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("home");
   };
 
   const handleNewAgent = () => {
-    void cleanupLiveIfActive();
+    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("create");
   };
 
   const handleSettings = () => {
-    void cleanupLiveIfActive();
+    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("settings");
   };
 
-  const handleStartLiveSession = async (agent: Agent) => {
+  const handleStartPair = async (agent: Agent) => {
     try {
-      const started = await startLiveSession(agent.id, "");
+      const started = await startPairSession(agent.id, "");
       setSelectedAgentId(agent.id);
-      setLiveSession({
+      setPairSession({
         agentId: agent.id,
         sessionId: started.session_id,
       });
-      setView("live");
+      setView("pair");
       refetch();
     } catch (err) {
-      console.error("Failed to start live session:", err);
-      notify("Live session failed", "Could not start a live session for this co-founder.");
-      setLiveSession(null);
+      console.error("Failed to start pair session:", err);
+      notify("Pair session failed", "Could not start a pair session for this co-founder.");
+      setPairSession(null);
       setSelectedAgentId(agent.id);
       setView("home");
       refetch();
@@ -113,7 +113,7 @@ export default function App() {
 
   const handleAgentCreated = async (agent: Agent) => {
     refetch();
-    await handleStartLiveSession(agent);
+    await handleStartPair(agent);
   };
 
   const handleAgentImported = () => {
@@ -121,12 +121,12 @@ export default function App() {
     setView("home");
   };
 
-  const cleanupLiveSession = async (continueAutonomous: boolean) => {
-    const prev = liveSession;
+  const cleanupPair = async (continueAutonomous: boolean) => {
+    const prev = pairSession;
     if (!prev) return;
-    setLiveSession(null);
+    setPairSession(null);
     try {
-      await endLiveSessionApi(prev.agentId, prev.sessionId, continueAutonomous);
+      await endPairSessionApi(prev.agentId, prev.sessionId, continueAutonomous);
     } catch {
       // best-effort — session may have already ended server-side
     }
@@ -134,19 +134,19 @@ export default function App() {
 
   const stableRefetch = useCallback(() => refetch(), [refetch]);
 
-  const handleEndLiveSession = async () => {
-    const agentId = liveSession?.agentId;
-    await cleanupLiveSession(true);
+  const handleEndPair = async () => {
+    const agentId = pairSession?.agentId;
+    await cleanupPair(true);
     if (agentId) setSelectedAgentId(agentId);
     setView("home");
     refetch();
   };
 
-  const handleNewLiveSession = async () => {
-    if (!liveAgent) return;
-    const agent = liveAgent;
-    await cleanupLiveSession(false);
-    await handleStartLiveSession(agent);
+  const handleNewPair = async () => {
+    if (!pairAgent) return;
+    const agent = pairAgent;
+    await cleanupPair(false);
+    await handleStartPair(agent);
   };
 
   const handleImportAgent = () => {
@@ -168,8 +168,8 @@ export default function App() {
   const selectedAgent = selectedAgentId
     ? agents.find((a) => a.id === selectedAgentId)
     : null;
-  const liveAgent = liveSession
-    ? agents.find((a) => a.id === liveSession.agentId) ?? null
+  const pairAgent = pairSession
+    ? agents.find((a) => a.id === pairSession.agentId) ?? null
     : null;
 
   useEffect(() => {
@@ -269,17 +269,17 @@ export default function App() {
     let active = true;
     let unlistenLiveEnded: (() => void) | null = null;
 
-    listen<LiveSessionEndedEvent>("live-session-ended", (event) => {
-      if (!active || !liveSession) return;
+    listen<PairSessionEndedEvent>("pair-session-ended", (event) => {
+      if (!active || !pairSession) return;
       const payload = event.payload;
       if (
-        payload.agent_id !== liveSession.agentId ||
-        payload.session_id !== liveSession.sessionId
+        payload.agent_id !== pairSession.agentId ||
+        payload.session_id !== pairSession.sessionId
       ) {
         return;
       }
       refetch();
-      // View stays on LiveSessionView; the component shows end state + "Back to Agent" button.
+      // View stays on PairView; the component shows end state + "Back to Agent" button.
     })
       .then((fn) => {
         if (active) unlistenLiveEnded = fn;
@@ -290,7 +290,7 @@ export default function App() {
       active = false;
       if (unlistenLiveEnded) unlistenLiveEnded();
     };
-  }, [liveSession, notify, refetch]);
+  }, [pairSession, notify, refetch]);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -342,12 +342,12 @@ export default function App() {
             onImported={handleAgentImported}
             onCancel={() => setView("home")}
           />
-        ) : view === "live" && liveSession && liveAgent ? (
-          <LiveSessionView
-            agent={liveAgent}
-            sessionId={liveSession.sessionId}
-            onManualEnd={handleEndLiveSession}
-            onNewSession={() => void handleNewLiveSession()}
+        ) : view === "pair" && pairSession && pairAgent ? (
+          <PairView
+            agent={pairAgent}
+            sessionId={pairSession.sessionId}
+            onManualEnd={handleEndPair}
+            onNewSession={() => void handleNewPair()}
             onSessionEnded={stableRefetch}
           />
         ) : view === "journey" && journeyData ? (
@@ -363,7 +363,7 @@ export default function App() {
             agent={selectedAgent}
             onRefetch={refetch}
             onShareJourney={handleShareJourney}
-            onStartLiveSession={handleStartLiveSession}
+            onStartPair={handleStartPair}
             onDeleted={() => {
               setSelectedAgentId(null);
               setView("home");

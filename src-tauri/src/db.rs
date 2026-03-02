@@ -81,6 +81,7 @@ impl Database {
         Self::migrate_add_cost_tracking(&conn)?;
         Self::migrate_add_work_session_mode(&conn)?;
         Self::migrate_add_budget_and_teams(&conn)?;
+        Self::migrate_add_pair_messages_table(&conn)?;
 
         Ok(())
     }
@@ -164,6 +165,26 @@ impl Database {
         )
         .map_err(|e| format!("Teams table migration failed: {e}"))?;
 
+        Ok(())
+    }
+
+    fn migrate_add_pair_messages_table(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS pair_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pair_messages_agent_session
+                ON pair_messages(agent_id, session_id);
+            CREATE INDEX IF NOT EXISTS idx_pair_messages_agent_time
+                ON pair_messages(agent_id, created_at DESC);",
+        )
+        .map_err(|e| format!("Pair messages migration failed: {e}"))?;
         Ok(())
     }
 
@@ -687,11 +708,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn recover_interrupted_live_sessions(&self) -> Result<u64, String> {
+    pub fn recover_interrupted_pair_sessions(&self) -> Result<u64, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
             .prepare(
-                "SELECT DISTINCT agent_id FROM work_sessions WHERE mode = 'live' AND ended_at IS NULL",
+                "SELECT DISTINCT agent_id FROM work_sessions WHERE mode = 'pair' AND ended_at IS NULL",
             )
             .map_err(|e| format!("Query error: {e}"))?;
 
@@ -710,7 +731,7 @@ impl Database {
             .execute(
                 "UPDATE work_sessions
                  SET ended_at = ?1, outcome = 'interrupted'
-                 WHERE mode = 'live' AND ended_at IS NULL",
+                 WHERE mode = 'pair' AND ended_at IS NULL",
                 params![now],
             )
             .map_err(|e| format!("Update error: {e}"))? as u64;
@@ -723,6 +744,62 @@ impl Database {
         }
 
         Ok(updated)
+    }
+
+    // ── Pair messages ─────────────────────────────────────────────────────────
+
+    pub fn save_pair_message(
+        &self,
+        agent_id: &Uuid,
+        session_id: &str,
+        role: &str,
+        content: &str,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "INSERT INTO pair_messages (agent_id, session_id, role, content, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                agent_id.to_string(),
+                session_id,
+                role,
+                content,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )
+        .map_err(|e| format!("Save pair message error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_recent_pair_messages(
+        &self,
+        agent_id: &Uuid,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String)>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT role, content, created_at FROM pair_messages
+                 WHERE agent_id = ?1
+                 ORDER BY created_at DESC
+                 LIMIT ?2",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+
+        let rows: Vec<(String, String, String)> = stmt
+            .query_map(params![agent_id.to_string(), limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Query error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        // Reverse so oldest first
+        Ok(rows.into_iter().rev().collect())
     }
 }
 

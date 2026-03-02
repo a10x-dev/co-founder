@@ -19,17 +19,18 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { sendLiveMessage } from "@/lib/api";
+import { sendPairMessage, saveInboxImages } from "@/lib/api";
+import { type AttachedImage, isImageFile, readFileAsThumbnail, readFileAsBase64 } from "@/lib/imageUtils";
 import type {
   Agent,
-  LivePreviewDetectedEvent,
-  LiveSessionEndedEvent,
-  LiveTurnCompleteEvent,
+  PairPreviewDetectedEvent,
+  PairSessionEndedEvent,
+  PairTurnCompleteEvent,
 } from "@/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface LiveSessionViewProps {
+interface PairViewProps {
   agent: Agent;
   sessionId: string;
   onManualEnd: () => Promise<void> | void;
@@ -43,12 +44,6 @@ interface AgentOutputEvent {
   type?: string;
   raw?: string;
   message?: string;
-}
-
-interface AttachedImage {
-  id: string;
-  name: string;
-  dataUrl: string;
 }
 
 type ChatMessage =
@@ -105,33 +100,6 @@ function formatDuration(ms: number): string {
   return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${secs % 60}s`;
 }
 
-function readFileAsThumbnail(file: File, maxDim = 200): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const img = new Image();
-      img.onload = () => {
-        const ratio = Math.min(maxDim / img.width, maxDim / img.height, 1);
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.round(img.width * ratio);
-        canvas.height = Math.round(img.height * ratio);
-        const ctx = canvas.getContext("2d");
-        if (!ctx) { resolve(dataUrl); return; }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.7));
-      };
-      img.onerror = () => resolve(dataUrl);
-      img.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function isImageFile(file: File): boolean {
-  return file.type.startsWith("image/");
-}
 
 // ─── Markdown renderer ───────────────────────────────────────────────────────
 
@@ -307,13 +275,13 @@ function TypingIndicator() {
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-export default function LiveSessionView({
+export default function PairView({
   agent,
   sessionId,
   onManualEnd,
   onNewSession,
   onSessionEnded,
-}: LiveSessionViewProps) {
+}: PairViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [canSend, setCanSend] = useState(false);
@@ -326,7 +294,6 @@ export default function LiveSessionView({
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [sendError, setSendError] = useState<string | null>(null);
 
-  // Track the current in-progress thinking block ID
   const activeThinkingIdRef = useRef<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -360,7 +327,6 @@ export default function LiveSessionView({
     if (agentMsgs.length === 0) return;
     const firstText = agentMsgs[0].text;
     if (!firstText || firstText.length < 8) return;
-    // Extract a short title: first sentence or first ~40 chars
     const cleaned = firstText.replace(/^#+\s*/gm, "").replace(/\*+/g, "").trim();
     const firstSentence = cleaned.split(/[.!?\n]/)[0]?.trim() ?? "";
     const title = firstSentence.length > 40
@@ -425,14 +391,12 @@ export default function LiveSessionView({
         setMessages((prev) => {
           const thinkingId = activeThinkingIdRef.current;
           if (thinkingId) {
-            // Add step to existing thinking block
             return prev.map((m) =>
               m.id === thinkingId && m.role === "thinking"
                 ? { ...m, steps: [...m.steps, label] }
                 : m,
             );
           }
-          // Create new thinking block
           const id = `think-${Date.now()}-${Math.random()}`;
           activeThinkingIdRef.current = id;
           return [
@@ -452,7 +416,6 @@ export default function LiveSessionView({
           setMessages((prev) => {
             const trimmed = prev.slice(-199);
             const last = trimmed[trimmed.length - 1];
-            // Replace or append agent streaming message
             if (last?.role === "agent" && last.isStreaming) {
               const next = [...trimmed];
               next[next.length - 1] = { ...last, text, timestamp: Date.now() };
@@ -477,7 +440,7 @@ export default function LiveSessionView({
       .then((fn) => { if (active) unlisten.push(fn); })
       .catch(() => {});
 
-    listen<LiveTurnCompleteEvent>("live-turn-complete", (event) => {
+    listen<PairTurnCompleteEvent>("pair-turn-complete", (event) => {
       if (!active) return;
       const p = event.payload;
       if (p.agent_id !== agent.id || p.session_id !== sessionId) return;
@@ -488,7 +451,6 @@ export default function LiveSessionView({
       setMessages((prev) => {
         let next = [...prev];
 
-        // Finalize thinking block with duration
         if (thinkingId) {
           next = next.map((m) => {
             if (m.id === thinkingId && m.role === "thinking") {
@@ -496,10 +458,8 @@ export default function LiveSessionView({
             }
             return m;
           });
-          // Thinking block stays finalized even if no agent text followed
         }
 
-        // Finalize streaming agent message
         const last = next[next.length - 1];
         if (last?.role === "agent" && last.isStreaming) {
           next[next.length - 1] = { ...last, isStreaming: false };
@@ -513,7 +473,7 @@ export default function LiveSessionView({
       .then((fn) => { if (active) unlisten.push(fn); })
       .catch(() => {});
 
-    listen<LivePreviewDetectedEvent>("live-preview-detected", (event) => {
+    listen<PairPreviewDetectedEvent>("pair-preview-detected", (event) => {
       if (!active) return;
       const p = event.payload;
       if (p.agent_id !== agent.id || p.session_id !== sessionId) return;
@@ -522,13 +482,13 @@ export default function LiveSessionView({
       .then((fn) => { if (active) unlisten.push(fn); })
       .catch(() => {});
 
-    listen<LiveSessionEndedEvent>("live-session-ended", (event) => {
+    listen<PairSessionEndedEvent>("pair-session-ended", (event) => {
       if (!active) return;
       const p = event.payload;
       if (p.agent_id !== agent.id || p.session_id !== sessionId) return;
       setCanSend(false);
       setSessionEnded(true);
-      if (p.summary && !p.summary.startsWith("Live session ended by user")) {
+      if (p.summary && !p.summary.startsWith("Pair session ended by user")) {
         setMessages((prev) => [
           ...prev,
           { id: `sys-${Date.now()}`, role: "system", text: p.summary, timestamp: Date.now() },
@@ -564,6 +524,7 @@ export default function LiveSessionView({
         id: `img-${Date.now()}-${Math.random()}`,
         name: f.name,
         dataUrl: await readFileAsThumbnail(f),
+        rawBase64: await readFileAsBase64(f),
       })),
     );
     setAttachedImages((prev) => {
@@ -578,7 +539,6 @@ export default function LiveSessionView({
     setAttachedImages((prev) => prev.filter((i) => i.id !== id));
   };
 
-  // DnD handlers
   const handleDragOver = (e: React.DragEvent) => {
     if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) {
       e.preventDefault();
@@ -602,12 +562,26 @@ export default function LiveSessionView({
 
     setSending(true);
     const imgs = [...attachedImages];
-    const textToSend = imgs.length > 0
-      ? `${msg}\n\n[Attached images: ${imgs.map((i) => i.name).join(", ")}]`.trim()
-      : msg;
+    let textToSend = msg;
+
+    if (imgs.length > 0) {
+      const imagesWithData = imgs
+        .filter((i) => i.rawBase64)
+        .map((i) => ({ name: i.name, data: i.rawBase64! }));
+
+      if (imagesWithData.length > 0) {
+        try {
+          const savedPaths = await saveInboxImages(agent.id, imagesWithData);
+          const pathList = savedPaths.map((p) => `  - ${p}`).join("\n");
+          textToSend = `${msg}\n\n[Attached images — saved to disk, view them with Read tool or open in browser:]\n${pathList}`.trim();
+        } catch {
+          textToSend = `${msg}\n\n[Attached images: ${imgs.map((i) => i.name).join(", ")}]`.trim();
+        }
+      }
+    }
 
     try {
-      await sendLiveMessage(agent.id, sessionId, textToSend);
+      await sendPairMessage(agent.id, sessionId, textToSend);
       setMessages((prev) => [
         ...prev,
         {
@@ -696,7 +670,7 @@ export default function LiveSessionView({
           onClick={onNewSession}
           className="h-7 w-7 flex items-center justify-center rounded-md cursor-pointer"
           style={{ color: "var(--text-tertiary)" }}
-          title="New live session"
+          title="New pair session"
           onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-inset)")}
           onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
         >
@@ -744,7 +718,7 @@ export default function LiveSessionView({
           ) : (
             <>
               <StopCircle size={11} />
-              End
+              End Pair
             </>
           )}
         </button>

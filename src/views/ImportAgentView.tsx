@@ -143,7 +143,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
 
       {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="w-full max-w-[520px] mx-auto px-6 py-6">
+        <div className="w-full max-w-[720px] mx-auto px-6 py-6">
           {step === 1 && (
             <div className="flex flex-col gap-6">
               <div>
@@ -268,7 +268,7 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
                 value={mission}
                 onChange={(e) => setMission(e.target.value)}
                 placeholder="Continue building the authentication system, then move on to the dashboard..."
-                rows={5}
+                rows={15}
                 className="w-full rounded-lg resize-none outline-none transition-all duration-150 ease-out"
                 style={{
                   fontSize: 16,

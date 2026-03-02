@@ -31,7 +31,7 @@ pub struct TurnConfig {
     pub allowed_tools: String,
     pub env_vars: Vec<(String, String)>,
     pub skip_permissions: bool,
-    pub live_session_id: Option<String>,
+    pub pair_session_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -144,7 +144,7 @@ impl CliAdapter {
                                     "agent-output",
                                     serde_json::json!({
                                         "agent_id": config.agent_id,
-                                        "session_id": config.live_session_id.as_ref().cloned(),
+                                        "session_id": config.pair_session_id.as_ref().cloned(),
                                         "type": "retry",
                                         "attempt": attempt + 1,
                                         "max_retries": max_retries,
@@ -266,23 +266,23 @@ impl CliAdapter {
                         "agent-output",
                         serde_json::json!({
                             "agent_id": config.agent_id,
-                            "session_id": config.live_session_id.as_ref().cloned(),
+                            "session_id": config.pair_session_id.as_ref().cloned(),
                             "type": event_type,
                             "raw": safe_line,
                         }),
                     );
                 }
 
-                if let (Some(handle), Some(live_session_id)) =
-                    (app_handle, config.live_session_id.as_ref())
+                if let (Some(handle), Some(pair_session_id)) =
+                    (app_handle, config.pair_session_id.as_ref())
                 {
                     if let Some(url) = extract_localhost_url(&safe_line) {
-                        if register_preview_url(live_session_id, &url) {
+                        if register_preview_url(pair_session_id, &url) {
                             let _ = handle.emit(
-                                "live-preview-detected",
+                                "pair-preview-detected",
                                 serde_json::json!({
                                     "agent_id": config.agent_id,
-                                    "session_id": live_session_id,
+                                    "session_id": pair_session_id,
                                     "url": url,
                                 }),
                             );
@@ -370,7 +370,7 @@ fn register_preview_url(session_id: &str, url: &str) -> bool {
     seen.insert(url.to_string())
 }
 
-pub fn clear_live_preview_urls(session_id: &str) {
+pub fn clear_pair_preview_urls(session_id: &str) {
     if let Ok(mut registry) = preview_registry().lock() {
         registry.remove(session_id);
     }

@@ -1,18 +1,11 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
-  FilePlus,
-  Wrench,
-  CheckCircle,
   Share2,
-  Terminal,
-  Search,
-  MessageCircle,
   AlertTriangle,
   GitBranch,
-  Undo2,
   ArrowRight,
 } from "lucide-react";
-import type { Agent, WorkSessionLog, ActivityEntry, GitStatus, TaskBoard, SpendBreakdown } from "@/types";
+import type { Agent, WorkSessionLog, GitStatus, TaskBoard } from "@/types";
 import {
   gitGetDiff,
   gitGetStatus,
@@ -20,19 +13,6 @@ import {
   getTaskBoard,
   moveTask,
 } from "@/lib/api";
-import { formatRelativeTime } from "@/lib/formatTime";
-
-const ICON_MAP: Record<
-  string,
-  React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>
-> = {
-  "file-plus": FilePlus,
-  "file-search": Search,
-  terminal: Terminal,
-  "message-circle": MessageCircle,
-  wrench: Wrench,
-  "check-circle": CheckCircle,
-};
 
 const OUTCOME_CONFIG: Record<
   WorkSessionLog["outcome"],
@@ -149,29 +129,6 @@ function classifyEvent(event: StoredEvent): ClassifiedEvent | null {
   return null;
 }
 
-const ACTIVITY_ICON_KEY: Record<string, string> = { file: "file-plus", search: "file-search", terminal: "terminal", agent: "wrench", message: "message-circle", done: "check-circle", tool: "wrench" };
-
-function buildActivityEntry(event: StoredEvent, session: WorkSessionLog, index: number): ActivityEntry | null {
-  const c = classifyEvent(event);
-  if (!c) return null;
-  return {
-    icon: ACTIVITY_ICON_KEY[c.icon] ?? "wrench",
-    title: c.title,
-    description: c.description,
-    timestamp: formatRelativeTime(session.started_at),
-    details: index < 3 ? c.detail : undefined,
-  };
-}
-
-function parseActivityEntries(session: WorkSessionLog | undefined): ActivityEntry[] {
-  if (!session?.events_json) return [];
-  let parsedEvents: StoredEvent[] = [];
-  try { parsedEvents = JSON.parse(session.events_json) as StoredEvent[]; } catch { return []; }
-  return parsedEvents.slice(-20).reverse()
-    .map((event, i) => buildActivityEntry(event, session, i))
-    .filter((entry): entry is ActivityEntry => entry !== null);
-}
-
 function parseSessionTimeline(eventsJson: string): ClassifiedEvent[] {
   let events: StoredEvent[] = [];
   try { events = JSON.parse(eventsJson) as StoredEvent[]; } catch { return []; }
@@ -184,7 +141,6 @@ const ghostButton =
 export interface OverviewTabProps {
   agent: Agent;
   sessions: WorkSessionLog[];
-  spend: SpendBreakdown | null;
   gitStatus: GitStatus | null;
   setGitStatus: (s: GitStatus | null) => void;
   taskBoard: TaskBoard | null;
@@ -195,7 +151,6 @@ export interface OverviewTabProps {
 export default function OverviewTab({
   agent,
   sessions,
-  spend,
   gitStatus,
   setGitStatus,
   taskBoard,
@@ -207,21 +162,12 @@ export default function OverviewTab({
   const [undoing, setUndoing] = useState(false);
 
   const latestSession = sessions[0];
-  const activity = useMemo(() => parseActivityEntries(latestSession), [latestSession]);
 
   const hasActiveTasks = taskBoard?.columns.some(c => (c.column === "In Progress" || c.column === "To Do") && c.tasks.length > 0);
   const gitHasChanges = gitStatus?.is_repo && (gitStatus?.changed_files ?? 0) > 0;
 
   return (
     <>
-      {spend && (spend.daily > 0 || spend.weekly > 0 || spend.total > 0) && (
-        <div className="flex items-center gap-4 mb-5 text-[13px] tabular-nums" style={{ color: "var(--text-tertiary)" }}>
-          <span>${spend.daily.toFixed(2)} today</span>
-          <span>· ${spend.weekly.toFixed(2)} this week</span>
-          <span>· ${spend.total.toFixed(2)} total</span>
-        </div>
-      )}
-
       {latestSession?.outcome === "blocked" && (
         <div className="rounded-xl p-4 border flex gap-3 mb-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", borderLeftWidth: 3, borderLeftColor: "var(--status-working)" }}>
           <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
@@ -279,40 +225,16 @@ export default function OverviewTab({
 
       {latestSession && latestSession.summary !== "Nothing to do" && (
         <div className="mb-5">
-          <h2 className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Latest update</h2>
-          <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-            <p className="text-[14px] leading-relaxed" style={{ color: "var(--text-secondary)" }}>{latestSession.summary}</p>
-            <div className="flex items-center gap-3 mt-3 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-              <span>{formatSessionDate(latestSession.started_at)}</span>
-              <span>· {latestSession.turns} turns</span>
-              {latestSession.cost_usd > 0 && <span>· ${latestSession.cost_usd.toFixed(4)}</span>}
-              <span className="px-2 py-0.5 rounded-full font-medium" style={{ background: `color-mix(in srgb, ${OUTCOME_CONFIG[latestSession.outcome].color} 10%, transparent)`, color: OUTCOME_CONFIG[latestSession.outcome].color }}>
-                {OUTCOME_CONFIG[latestSession.outcome].label}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activity.length > 0 && (
-        <div className="mb-5">
-          <h2 className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Recent actions</h2>
-          <div className="flex flex-col gap-2">
-            {activity.slice(0, 5).map((entry, i) => {
-              const Icon = ICON_MAP[entry.icon] ?? Wrench;
-              return (
-                <div key={`activity-${i}`} className="flex items-start gap-3 px-3 py-2 rounded-lg" style={{ background: "var(--bg-surface)" }}>
-                  <Icon size={16} className="shrink-0 mt-0.5" style={{ color: "var(--text-tertiary)" }} />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[13px]" style={{ color: "var(--text-secondary)" }}>{entry.title}</span>
-                    {entry.description && <span className="text-[13px] ml-1" style={{ color: "var(--text-tertiary)" }}>— {truncate(entry.description, 80)}</span>}
-                  </div>
-                </div>
-              );
-            })}
-            {activity.length > 5 && (
-              <p className="text-[12px] pl-3" style={{ color: "var(--text-tertiary)" }}>+ {activity.length - 5} more actions</p>
-            )}
+          <h2 className="text-[15px] font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Latest update</h2>
+          <p className="text-[14px] leading-relaxed mb-1.5" style={{ color: "var(--text-secondary)" }}>{latestSession.summary}</p>
+          <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
+            <span>{formatSessionDate(latestSession.started_at)}</span>
+            <span>·</span>
+            <span>{latestSession.turns} turns</span>
+            <span>·</span>
+            <span className="font-medium" style={{ color: OUTCOME_CONFIG[latestSession.outcome].color }}>
+              {OUTCOME_CONFIG[latestSession.outcome].label}
+            </span>
           </div>
         </div>
       )}
@@ -355,7 +277,7 @@ export default function OverviewTab({
         </div>
       )}
 
-      {!latestSession && activity.length === 0 && (
+      {!latestSession && (
         <p className="text-[14px] mb-5" style={{ color: "var(--text-tertiary)" }}>No activity yet. Start your co-founder to begin working.</p>
       )}
 
