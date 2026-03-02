@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, LiveSessionStartResponse } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -83,6 +83,18 @@ export async function writeTextFile(agentId: string, path: string, content: stri
 
 export async function triggerManualSession(id: string): Promise<void> {
   return invoke("trigger_manual_session", { id });
+}
+
+export async function startLiveSession(agentId: string, message: string): Promise<LiveSessionStartResponse> {
+  return invoke("start_live_session", { agentId, message });
+}
+
+export async function sendLiveMessage(agentId: string, sessionId: string, message: string): Promise<void> {
+  return invoke("send_live_message", { agentId, sessionId, message });
+}
+
+export async function endLiveSession(agentId: string, sessionId: string, continueAutonomous = true): Promise<void> {
+  return invoke("end_live_session", { agentId, sessionId, continueAutonomous });
 }
 
 export async function sendMessageToAgent(agentId: string, message: string): Promise<void> {

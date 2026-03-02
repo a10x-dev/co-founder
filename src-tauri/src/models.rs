@@ -94,6 +94,7 @@ pub enum SessionOutcome {
     Timeout,
     Error,
     RateLimited,
+    Interrupted,
 }
 
 impl fmt::Display for SessionOutcome {
@@ -104,6 +105,7 @@ impl fmt::Display for SessionOutcome {
             SessionOutcome::Timeout => write!(f, "timeout"),
             SessionOutcome::Error => write!(f, "error"),
             SessionOutcome::RateLimited => write!(f, "rate_limited"),
+            SessionOutcome::Interrupted => write!(f, "interrupted"),
         }
     }
 }
@@ -115,7 +117,33 @@ impl SessionOutcome {
             "timeout" => SessionOutcome::Timeout,
             "error" => SessionOutcome::Error,
             "rate_limited" => SessionOutcome::RateLimited,
+            "interrupted" => SessionOutcome::Interrupted,
             _ => SessionOutcome::Completed,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkSessionMode {
+    Autonomous,
+    Live,
+}
+
+impl fmt::Display for WorkSessionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorkSessionMode::Autonomous => write!(f, "autonomous"),
+            WorkSessionMode::Live => write!(f, "live"),
+        }
+    }
+}
+
+impl WorkSessionMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "live" => WorkSessionMode::Live,
+            _ => WorkSessionMode::Autonomous,
         }
     }
 }
@@ -158,6 +186,7 @@ pub struct WorkSessionLog {
     pub id: Uuid,
     pub agent_id: Uuid,
     pub session_id: String,
+    pub mode: WorkSessionMode,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub turns: u32,

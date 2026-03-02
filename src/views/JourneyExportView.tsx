@@ -13,6 +13,7 @@ const OUTCOME_COLORS: Record<WorkSessionLog["outcome"], string> = {
   timeout: "var(--status-idle)",
   error: "var(--status-error)",
   rate_limited: "var(--status-paused)",
+  interrupted: "var(--status-error)",
 };
 
 function formatSessionDate(isoString: string): string {

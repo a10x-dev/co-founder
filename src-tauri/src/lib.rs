@@ -9,7 +9,9 @@ mod work_session;
 mod commands;
 mod daily_report;
 
-use std::sync::{Arc, RwLock};
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -18,11 +20,24 @@ use tauri::{
 };
 use uuid::Uuid;
 
+pub struct LiveSessionHandle {
+    pub sender: tokio::sync::mpsc::Sender<LiveMessage>,
+    pub session_id: String,
+    pub cancelled: Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+pub enum LiveMessage {
+    UserMessage(String),
+    End,
+}
+
 pub struct AppState {
     pub db: Arc<db::Database>,
     pub process_pool: Arc<process_pool::ProcessPool>,
     pub heartbeat: Arc<heartbeat::HeartbeatScheduler>,
     pub cli: Arc<RwLock<cli_adapter::CliAdapter>>,
+    pub live_sessions: Arc<Mutex<HashMap<String, LiveSessionHandle>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -45,6 +60,7 @@ pub fn run() {
         process_pool: pool.clone(),
         heartbeat: heartbeat.clone(),
         cli: cli.clone(),
+        live_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = tauri::Builder::default()
@@ -107,6 +123,9 @@ pub fn run() {
             let heartbeat = state.heartbeat.clone();
             let cli = state.cli.clone();
             let app_handle = app.handle().clone();
+
+            // Recover stale live sessions if app exited unexpectedly during a live run.
+            let _ = db.recover_interrupted_live_sessions();
 
             // If the app was exited unexpectedly, stale "running" statuses can remain.
             // Normalize them to paused so UI and runtime state are consistent at launch.
@@ -234,6 +253,9 @@ pub fn run() {
             commands::save_schedule_entry,
             commands::delete_schedule_entry,
             commands::toggle_schedule_entry,
+            commands::start_live_session,
+            commands::send_live_message,
+            commands::end_live_session,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -428,6 +450,9 @@ async fn run_heartbeat_tick(
                     } else {
                         let _ = db.update_agent_status(&agent_uuid, &models::AgentStatus::Error);
                     }
+                }
+                models::SessionOutcome::Interrupted => {
+                    // Neutral — user or system interrupted a live session; preserve error state.
                 }
                 models::SessionOutcome::Completed | models::SessionOutcome::Timeout => {
                     let _ = db.reset_consecutive_errors(&agent_uuid);

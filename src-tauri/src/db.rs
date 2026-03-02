@@ -79,6 +79,7 @@ impl Database {
         Self::migrate_add_env_vars_table(&conn)?;
         Self::migrate_add_active_hours(&conn)?;
         Self::migrate_add_cost_tracking(&conn)?;
+        Self::migrate_add_work_session_mode(&conn)?;
         Self::migrate_add_budget_and_teams(&conn)?;
 
         Ok(())
@@ -111,6 +112,17 @@ impl Database {
                  ALTER TABLE work_sessions ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0.0;",
             )
             .map_err(|e| format!("Cost tracking migration failed: {e}"))?;
+        }
+        Ok(())
+    }
+
+    fn migrate_add_work_session_mode(conn: &Connection) -> Result<(), String> {
+        let has_col: bool = conn.prepare("SELECT mode FROM work_sessions LIMIT 0").is_ok();
+        if !has_col {
+            conn.execute_batch(
+                "ALTER TABLE work_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'autonomous';",
+            )
+            .map_err(|e| format!("Work session mode migration failed: {e}"))?;
         }
         Ok(())
     }
@@ -360,7 +372,7 @@ impl Database {
     ) -> Result<Vec<WorkSessionLog>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare(&format!("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT {limit}"))
+            .prepare(&format!("SELECT id, agent_id, session_id, mode, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT {limit}"))
             .map_err(|e| format!("Query error: {e}"))?;
 
         let sessions = stmt
@@ -369,16 +381,17 @@ impl Database {
                     id: Uuid::parse_str(&row.get::<_, String>(0)?).unwrap_or_default(),
                     agent_id: Uuid::parse_str(&row.get::<_, String>(1)?).unwrap_or_default(),
                     session_id: row.get(2)?,
-                    started_at: row.get(3)?,
-                    ended_at: row.get(4)?,
-                    turns: row.get::<_, i32>(5)? as u32,
-                    trigger: SessionTrigger::from_str(&row.get::<_, String>(6)?),
-                    outcome: SessionOutcome::from_str(&row.get::<_, String>(7)?),
-                    summary: row.get(8)?,
-                    events_json: row.get(9)?,
-                    input_tokens: row.get::<_, i64>(10)? as u64,
-                    output_tokens: row.get::<_, i64>(11)? as u64,
-                    cost_usd: row.get(12)?,
+                    mode: WorkSessionMode::from_str(&row.get::<_, String>(3)?),
+                    started_at: row.get(4)?,
+                    ended_at: row.get(5)?,
+                    turns: row.get::<_, i32>(6)? as u32,
+                    trigger: SessionTrigger::from_str(&row.get::<_, String>(7)?),
+                    outcome: SessionOutcome::from_str(&row.get::<_, String>(8)?),
+                    summary: row.get(9)?,
+                    events_json: row.get(10)?,
+                    input_tokens: row.get::<_, i64>(11)? as u64,
+                    output_tokens: row.get::<_, i64>(12)? as u64,
+                    cost_usd: row.get(13)?,
                 })
             })
             .map_err(|e| format!("Query error: {e}"))?
@@ -391,11 +404,12 @@ impl Database {
     pub fn log_work_session(&self, log: &WorkSessionLog) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(
-            "INSERT INTO work_sessions (id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO work_sessions (id, agent_id, session_id, mode, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 log.id.to_string(),
                 log.agent_id.to_string(),
                 log.session_id,
+                log.mode.to_string(),
                 log.started_at,
                 log.ended_at,
                 log.turns as i32,
@@ -423,6 +437,44 @@ impl Database {
             params![log.agent_id.to_string()],
         );
 
+        Ok(())
+    }
+
+    pub fn finalize_work_session(&self, log: &WorkSessionLog) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let updated = conn.execute(
+            "UPDATE work_sessions
+             SET session_id = ?1,
+                 mode = ?2,
+                 ended_at = ?3,
+                 turns = ?4,
+                 trigger = ?5,
+                 outcome = ?6,
+                 summary = ?7,
+                 events_json = ?8,
+                 input_tokens = ?9,
+                 output_tokens = ?10,
+                 cost_usd = ?11
+             WHERE id = ?12",
+            params![
+                log.session_id,
+                log.mode.to_string(),
+                log.ended_at,
+                log.turns as i32,
+                log.trigger.to_string(),
+                log.outcome.to_string(),
+                log.summary,
+                log.events_json,
+                log.input_tokens as i64,
+                log.output_tokens as i64,
+                log.cost_usd,
+                log.id.to_string(),
+            ],
+        )
+        .map_err(|e| format!("Finalize session error: {e}"))?;
+        if updated == 0 {
+            return Err("Finalize session error: session row not found".to_string());
+        }
         Ok(())
     }
 
@@ -633,6 +685,44 @@ impl Database {
         )
         .map_err(|e| format!("Update settings error: {e}"))?;
         Ok(())
+    }
+
+    pub fn recover_interrupted_live_sessions(&self) -> Result<u64, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT agent_id FROM work_sessions WHERE mode = 'live' AND ended_at IS NULL",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+
+        let agent_ids: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Query error: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if agent_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let updated = conn
+            .execute(
+                "UPDATE work_sessions
+                 SET ended_at = ?1, outcome = 'interrupted'
+                 WHERE mode = 'live' AND ended_at IS NULL",
+                params![now],
+            )
+            .map_err(|e| format!("Update error: {e}"))? as u64;
+
+        for agent_id in agent_ids {
+            let _ = conn.execute(
+                "UPDATE agents SET status = 'idle', current_session_id = NULL WHERE id = ?1",
+                params![agent_id],
+            );
+        }
+
+        Ok(updated)
     }
 }
 

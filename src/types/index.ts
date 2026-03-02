@@ -1,7 +1,14 @@
 export type AgentStatus = "idle" | "running" | "paused" | "error";
 export type AutonomyLevel = "semi" | "yolo";
 export type SessionTrigger = "heartbeat" | "manual" | "continued";
-export type SessionOutcome = "completed" | "blocked" | "timeout" | "error" | "rate_limited";
+export type SessionOutcome =
+  | "completed"
+  | "blocked"
+  | "timeout"
+  | "error"
+  | "rate_limited"
+  | "interrupted";
+export type WorkSessionMode = "autonomous" | "live";
 
 export interface Agent {
   id: string;
@@ -45,6 +52,7 @@ export interface WorkSessionLog {
   id: string;
   agent_id: string;
   session_id: string;
+  mode: WorkSessionMode;
   started_at: string;
   ended_at: string | null;
   turns: number;
@@ -55,6 +63,28 @@ export interface WorkSessionLog {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+}
+
+export interface LiveSessionStartResponse {
+  agent_id: string;
+  session_id: string;
+}
+
+export interface LiveTurnCompleteEvent {
+  agent_id: string;
+  session_id: string;
+}
+
+export interface LivePreviewDetectedEvent {
+  agent_id: string;
+  session_id: string;
+  url: string;
+}
+
+export interface LiveSessionEndedEvent {
+  agent_id: string;
+  session_id: string;
+  summary: string;
 }
 
 export interface GlobalSettings {

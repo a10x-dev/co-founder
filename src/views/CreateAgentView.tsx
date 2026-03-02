@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Package, Globe, Smartphone, ShoppingCart } from "lucide-react";
-import type { CreateAgentRequest } from "@/types";
+import type { Agent, CreateAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { createAgent } from "@/lib/api";
 import FriendlyError from "@/components/FriendlyError";
@@ -44,7 +44,7 @@ const TEMPLATES = [
 ] as const;
 
 interface CreateAgentViewProps {
-  onCreated: () => void;
+  onCreated: (agent: Agent) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -71,8 +71,8 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
         checkin_interval_secs: checkinInterval,
         autonomy_level: autonomyLevel,
       };
-      await createAgent(req);
-      onCreated();
+      const created = await createAgent(req);
+      await onCreated(created);
     } catch (e) {
       setError(extractError(e));
     } finally {

@@ -29,6 +29,7 @@ const OUTCOME_BADGE: Record<string, { label: string; bg: string; color: string }
   timeout: { label: "Timeout", bg: "color-mix(in srgb, var(--status-paused) 12%, transparent)", color: "var(--status-paused)" },
   error: { label: "Error", bg: "color-mix(in srgb, var(--status-error) 12%, transparent)", color: "var(--status-error)" },
   rate_limited: { label: "Rate Limited", bg: "color-mix(in srgb, var(--status-paused) 12%, transparent)", color: "var(--status-paused)" },
+  interrupted: { label: "Interrupted", bg: "color-mix(in srgb, var(--status-error) 12%, transparent)", color: "var(--status-error)" },
 };
 
 interface HomeViewProps {

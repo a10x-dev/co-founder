@@ -1,4 +1,6 @@
 use chrono::{Datelike, Timelike, Utc};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::cli_adapter::{CliAdapter, TurnConfig, TurnError};
@@ -293,6 +295,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             allowed_tools: agent.allowed_tools.clone(),
             env_vars: env_vars.clone(),
             skip_permissions: skip_perms,
+            live_session_id: None,
         };
 
         let _ = app_handle.emit("agent-output", serde_json::json!({
@@ -303,7 +306,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             "max_duration_secs": agent.max_session_duration_secs,
         }));
 
-        let result = match cli.run_turn_with_retry(config, Some(pool), Some(&app_handle), 2) {
+        let result = match cli.run_turn_with_retry(config, Some(pool), Some(&app_handle), 2, None) {
             Ok(result) => result,
             Err(turn_err) => {
                 let outcome = match &turn_err {
@@ -314,6 +317,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     id: session_uuid,
                     agent_id: agent.id,
                     session_id: String::new(),
+                    mode: WorkSessionMode::Autonomous,
                     started_at,
                     ended_at: Some(Utc::now().to_rfc3339()),
                     turns: 0,
@@ -346,6 +350,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 id: session_uuid,
                 agent_id: agent.id,
                 session_id: final_session_id.unwrap_or_default(),
+                mode: WorkSessionMode::Autonomous,
                 started_at,
                 ended_at: Some(Utc::now().to_rfc3339()),
                 turns,
@@ -386,6 +391,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     id: session_uuid,
                     agent_id: agent.id,
                     session_id: final_session_id.clone().unwrap_or_default(),
+                    mode: WorkSessionMode::Autonomous,
                     started_at: started_at.clone(),
                     ended_at: Some(Utc::now().to_rfc3339()),
                     turns,
@@ -412,15 +418,16 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             let resume_config = TurnConfig {
                 agent_id: agent.id.to_string(),
                 workspace: agent.workspace.clone(),
-                prompt: "Continue working on the highest-impact task. Start your response with exactly one line: `SESSION_STATUS: CONTINUE` or `SESSION_STATUS: DONE`. Use `DONE` only when this work session should end now. If blocked, explain why. Include your NEXT_CHECKIN directive at the end.".to_string(),
+                prompt: "Continue working on the highest-impact task. Start your response with exactly one line: `SESSION_STATUS: CONTINUE`, `SESSION_STATUS: DONE`, or `SESSION_STATUS: BLOCKED`. Use `DONE` only when this work session should end now. Use `BLOCKED` only when you genuinely cannot proceed without human input. Include your NEXT_CHECKIN directive at the end.".to_string(),
                 soul_content: None,
                 resume_session_id: Some(sid),
                 allowed_tools: agent.allowed_tools.clone(),
                 env_vars: env_vars.clone(),
                 skip_permissions: skip_perms,
+                live_session_id: None,
             };
 
-            match cli.run_turn_with_retry(resume_config, Some(pool), Some(&app_handle), 2) {
+            match cli.run_turn_with_retry(resume_config, Some(pool), Some(&app_handle), 2, None) {
                 Ok(turn_result) => {
                     turns += 1;
                     if let Some(ref sid) = turn_result.session_id {
@@ -429,17 +436,14 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     all_events.extend(turn_result.events);
                     all_text.push_str(&turn_result.text_output);
 
-                    let output_lower = turn_result.text_output.to_lowercase();
-                    if output_lower.contains("blocked")
-                        || output_lower.contains("stuck")
-                        || output_lower.contains("cannot proceed")
-                    {
+                    if parse_session_status(&turn_result.text_output) == Some(SessionStatus::Blocked) {
                         let requested = parse_next_checkin(&all_text);
                         let (it, ot, cost) = parse_token_usage(&all_events);
                         let log = WorkSessionLog {
                             id: session_uuid,
                             agent_id: agent.id,
                             session_id: final_session_id.unwrap_or_default(),
+                            mode: WorkSessionMode::Autonomous,
                             started_at: started_at.clone(),
                             ended_at: Some(Utc::now().to_rfc3339()),
                             turns,
@@ -471,6 +475,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         id: session_uuid,
                         agent_id: agent.id,
                         session_id: final_session_id.unwrap_or_default(),
+                        mode: WorkSessionMode::Autonomous,
                         started_at: started_at.clone(),
                         ended_at: Some(Utc::now().to_rfc3339()),
                         turns,
@@ -497,6 +502,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             id: session_uuid,
             agent_id: agent.id,
             session_id: final_session_id.unwrap_or_default(),
+            mode: WorkSessionMode::Autonomous,
             started_at,
             ended_at: Some(Utc::now().to_rfc3339()),
             turns,
@@ -514,12 +520,233 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             requested_next_checkin_secs: requested,
         })
     }
+
+    pub async fn run_live_session(
+        cli: CliAdapter,
+        agent: Agent,
+        initial_message: String,
+        mut receiver: tokio::sync::mpsc::Receiver<crate::LiveMessage>,
+        pool: Arc<ProcessPool>,
+        db: Arc<Database>,
+        app_handle: AppHandle,
+        live_session_id: String,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<WorkSessionLog, String> {
+        let log_id = Uuid::new_v4();
+        let started_at = Utc::now().to_rfc3339();
+        let session_start = std::time::Instant::now();
+
+        let soul_content = StateManager::get_soul_content(&agent.workspace, &agent.personality);
+        let mission_file = StateManager::read_mission(&agent.workspace);
+        let mission_content = if mission_file.trim().is_empty() {
+            agent.mission.clone()
+        } else {
+            mission_file
+        };
+        let state_content = StateManager::read_state(&agent.workspace);
+        let memory_content = StateManager::read_memory(&agent.workspace);
+        let env_vars = db.get_agent_env_vars_as_pairs(&agent.id).unwrap_or_default();
+        let skip_perms = agent.autonomy_level == crate::models::AutonomyLevel::Yolo;
+
+        let mut claude_session_id: Option<String> = None;
+        let mut turns: u32 = 0;
+        let mut all_events: Vec<crate::cli_adapter::StreamEvent> = Vec::new();
+
+        let mut outcome = SessionOutcome::Completed;
+        let mut prompt = build_live_kickoff_prompt(
+            &mission_content,
+            &state_content,
+            &memory_content,
+            &initial_message,
+        );
+        let in_progress_log = WorkSessionLog {
+            id: log_id,
+            agent_id: agent.id,
+            session_id: live_session_id.clone(),
+            mode: WorkSessionMode::Live,
+            started_at: started_at.clone(),
+            ended_at: None,
+            turns: 0,
+            trigger: SessionTrigger::Manual,
+            outcome: SessionOutcome::Completed,
+            summary: "Live session started".to_string(),
+            events_json: "[]".to_string(),
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_usd: 0.0,
+        };
+        db.log_work_session(&in_progress_log)?;
+
+        let _ = app_handle.emit(
+            "agent-output",
+            serde_json::json!({
+                "agent_id": agent.id.to_string(),
+                "session_id": live_session_id,
+                "type": "session_start",
+                "message": "Live session started.",
+                "max_turns": 9999,
+                "max_duration_secs": agent.max_session_duration_secs,
+            }),
+        );
+
+        let summary = loop {
+            if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
+                outcome = SessionOutcome::Timeout;
+                break "Live session timed out".to_string();
+            }
+
+            let config = TurnConfig {
+                agent_id: agent.id.to_string(),
+                workspace: agent.workspace.clone(),
+                prompt,
+                soul_content: if claude_session_id.is_none() {
+                    Some(soul_content.clone())
+                } else {
+                    None
+                },
+                resume_session_id: claude_session_id.clone(),
+                allowed_tools: agent.allowed_tools.clone(),
+                env_vars: env_vars.clone(),
+                skip_permissions: skip_perms,
+                live_session_id: Some(live_session_id.clone()),
+            };
+
+            let cli_for_turn = cli.clone();
+            let pool_for_turn = pool.clone();
+            let app_for_turn = app_handle.clone();
+            let cancel_for_turn = cancel.clone();
+            let turn_result = match tauri::async_runtime::spawn_blocking(move || {
+                cli_for_turn.run_turn_with_retry(
+                    config,
+                    Some(pool_for_turn.as_ref()),
+                    Some(&app_for_turn),
+                    2,
+                    Some(&cancel_for_turn),
+                )
+            })
+            .await
+            {
+                Ok(result) => result,
+                Err(err) => {
+                    outcome = SessionOutcome::Interrupted;
+                    break format!("Live session interrupted: {err}");
+                }
+            };
+
+            match turn_result {
+                Ok(turn) => {
+                    turns += 1;
+                    if let Some(sid) = turn.session_id {
+                        claude_session_id = Some(sid);
+                    }
+                    all_events.extend(turn.events);
+
+                    let _ = app_handle.emit(
+                        "live-turn-complete",
+                        serde_json::json!({
+                            "agent_id": agent.id.to_string(),
+                            "session_id": live_session_id,
+                        }),
+                    );
+                }
+                Err(err) => {
+                    outcome = match err {
+                        TurnError::RateLimited(_) => SessionOutcome::RateLimited,
+                        _ => SessionOutcome::Error,
+                    };
+                    break format!("Live session error: {err}");
+                }
+            }
+
+            match receiver.recv().await {
+                Some(crate::LiveMessage::UserMessage(next_prompt)) => {
+                    prompt = next_prompt;
+                }
+                Some(crate::LiveMessage::End) => {
+                    break "Live session ended by user".to_string();
+                }
+                None => {
+                    outcome = SessionOutcome::Interrupted;
+                    break "Live session interrupted".to_string();
+                }
+            }
+        };
+
+        let (input_tokens, output_tokens, cost_usd) = parse_token_usage(&all_events);
+        let log = WorkSessionLog {
+            id: log_id,
+            agent_id: agent.id,
+            session_id: claude_session_id.unwrap_or_else(|| live_session_id.clone()),
+            mode: WorkSessionMode::Live,
+            started_at,
+            ended_at: Some(Utc::now().to_rfc3339()),
+            turns,
+            trigger: SessionTrigger::Manual,
+            outcome,
+            summary: summary.clone(),
+            events_json: serialize_events(&all_events),
+            input_tokens,
+            output_tokens,
+            cost_usd,
+        };
+
+        db.finalize_work_session(&log)?;
+        crate::cli_adapter::clear_live_preview_urls(&live_session_id);
+
+        let _ = app_handle.emit("session-completed", &log);
+        let _ = app_handle.emit(
+            "live-session-ended",
+            serde_json::json!({
+                "agent_id": agent.id.to_string(),
+                "session_id": live_session_id,
+                "summary": summary,
+            }),
+        );
+
+        Ok(log)
+    }
+}
+
+fn build_live_kickoff_prompt(
+    mission: &str,
+    state: &str,
+    memory: &str,
+    user_message: &str,
+) -> String {
+    let memory_tail = {
+        let lines: Vec<&str> = memory.lines().collect();
+        if lines.len() > 40 {
+            lines[lines.len() - 40..].join("\n")
+        } else {
+            memory.to_string()
+        }
+    };
+
+    let request_section = if user_message.trim().is_empty() {
+        "Your co-founder just opened a live session. Greet them briefly, summarize where things \
+         stand right now, and ask what they'd like to work on together. Keep it concise and direct."
+            .to_string()
+    } else {
+        format!(
+            "## Co-Founder Request\n{user_message}\n\nRespond with what you'll do now, then execute. Keep momentum high."
+        )
+    };
+
+    format!(
+        "You are in LIVE SYNC MODE with your human co-founder.\n\
+         Collaborate directly and execute immediately.\n\n\
+         ## Mission\n{mission}\n\n\
+         ## Current State\n{state}\n\n\
+         ## Recent Memory\n{memory_tail}\n\n\
+         {request_section}"
+    )
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SessionStatus {
     Continue,
     Done,
+    Blocked,
 }
 
 fn parse_session_status(text: &str) -> Option<SessionStatus> {
@@ -535,6 +762,9 @@ fn parse_session_status(text: &str) -> Option<SessionStatus> {
         }
         if status == "CONTINUE" {
             return Some(SessionStatus::Continue);
+        }
+        if status == "BLOCKED" {
+            return Some(SessionStatus::Blocked);
         }
     }
     None
@@ -668,10 +898,11 @@ fn serialize_events(events: &[crate::cli_adapter::StreamEvent]) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}...", &s[..max])
+        let end: String = s.chars().take(max).collect();
+        format!("{end}...")
     }
 }
 

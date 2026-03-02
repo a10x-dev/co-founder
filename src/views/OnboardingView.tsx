@@ -12,7 +12,7 @@ import {
   FolderOpen,
   Sparkles,
 } from "lucide-react";
-import type { CreateAgentRequest } from "@/types";
+import type { Agent, CreateAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { createAgent } from "@/lib/api";
 import FriendlyError from "@/components/FriendlyError";
@@ -78,7 +78,7 @@ const MISSION_TEMPLATES = [
 ] as const;
 
 interface OnboardingViewProps {
-  onCreated: () => void;
+  onCreated: (agent: Agent) => Promise<void> | void;
   onImport: () => void;
 }
 
@@ -107,8 +107,8 @@ export default function OnboardingView({ onCreated, onImport }: OnboardingViewPr
         checkin_interval_secs: checkinInterval,
         autonomy_level: autonomyLevel,
       };
-      await createAgent(req);
-      onCreated();
+      const created = await createAgent(req);
+      await onCreated(created);
     } catch (e) {
       setError(extractError(e));
     } finally {

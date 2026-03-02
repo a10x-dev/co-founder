@@ -2,13 +2,16 @@ use chrono::{Datelike, Utc};
 use serde::Serialize;
 use serde_json::Value;
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::Emitter;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::cli_adapter::{detect_claude_path, get_claude_version};
 use crate::models::*;
 use crate::state_manager::StateManager;
-use crate::AppState;
+use crate::{AppState, LiveMessage, LiveSessionHandle};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceHealthResponse {
@@ -23,6 +26,12 @@ pub struct FolderInspectionResponse {
     pub detected_type: Option<String>,
     pub already_has_founder: bool,
     pub readme_summary: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LiveSessionStartResponse {
+    pub agent_id: String,
+    pub session_id: String,
 }
 
 #[tauri::command]
@@ -221,6 +230,13 @@ pub async fn delete_agent(
     state.heartbeat.stop_agent_heartbeat(&id);
     let _ = state.process_pool.kill_agent(&id);
 
+    if let Ok(mut sessions) = state.live_sessions.lock() {
+        if let Some(handle) = sessions.remove(&id) {
+            handle.cancelled.store(true, Ordering::Relaxed);
+            let _ = handle.sender.try_send(LiveMessage::End);
+        }
+    }
+
     if remove_founder {
         let agent = state.db.get_agent(&uuid)?;
         let founder_path = format!("{}/.founder", agent.workspace.trim_end_matches('/'));
@@ -408,6 +424,198 @@ pub async fn trigger_manual_session(
         "reason": "manual",
     });
     let _ = app.emit("heartbeat-tick", payload);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_live_session(
+    agent_id: String,
+    message: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<LiveSessionStartResponse, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+
+    let (receiver, live_session_id, cancelled) = {
+        let mut sessions = state
+            .live_sessions
+            .lock()
+            .map_err(|e| format!("Live session lock error: {e}"))?;
+
+        if let Some(handle) = sessions.get(&agent_id) {
+            if !handle.sender.is_closed() {
+                return Ok(LiveSessionStartResponse {
+                    agent_id,
+                    session_id: handle.session_id.clone(),
+                });
+            }
+            sessions.remove(&agent_id);
+        }
+
+        state.heartbeat.stop_agent_heartbeat(&agent_id);
+        let _ = state.process_pool.kill_agent(&agent_id);
+        let _ = state.db.reset_consecutive_errors(&uuid);
+
+        let (sender, receiver) = mpsc::channel::<LiveMessage>(32);
+        let session_id = Uuid::new_v4().to_string();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        sessions.insert(
+            agent_id.clone(),
+            LiveSessionHandle {
+                sender,
+                session_id: session_id.clone(),
+                cancelled: cancelled.clone(),
+            },
+        );
+        (receiver, session_id, cancelled)
+    };
+
+    state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
+
+    let cli = state
+        .cli
+        .read()
+        .map_err(|e| format!("CLI lock error: {e}"))?
+        .clone();
+    let db = state.db.clone();
+    let pool = state.process_pool.clone();
+    let heartbeat = state.heartbeat.clone();
+    let live_sessions = state.live_sessions.clone();
+    let app_handle = app.clone();
+    let agent_id_for_task = agent_id.clone();
+    let session_id_for_task = live_session_id.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let run_result = crate::work_session::WorkSessionEngine::run_live_session(
+            cli,
+            agent,
+            message,
+            receiver,
+            pool,
+            db.clone(),
+            app_handle.clone(),
+            session_id_for_task.clone(),
+            cancelled,
+        )
+        .await;
+        crate::cli_adapter::clear_live_preview_urls(&session_id_for_task);
+
+        if let Ok(mut sessions) = live_sessions.lock() {
+            let should_remove = sessions
+                .get(&agent_id_for_task)
+                .map(|h| h.session_id == session_id_for_task)
+                .unwrap_or(false);
+            if should_remove {
+                sessions.remove(&agent_id_for_task);
+            }
+        }
+
+        if run_result.is_err() {
+            let _ = app_handle.emit(
+                "live-session-ended",
+                serde_json::json!({
+                    "agent_id": agent_id_for_task,
+                    "session_id": session_id_for_task,
+                    "summary": "Live session ended due to an unexpected runtime error.",
+                }),
+            );
+        }
+
+        if let Ok(agent_uuid) = Uuid::parse_str(&agent_id_for_task) {
+            if heartbeat.get_interval(&agent_id_for_task).is_none() {
+                let _ = db.update_agent_status(&agent_uuid, &AgentStatus::Idle);
+            }
+        }
+    });
+
+    Ok(LiveSessionStartResponse {
+        agent_id,
+        session_id: live_session_id,
+    })
+}
+
+#[tauri::command]
+pub async fn send_live_message(
+    agent_id: String,
+    session_id: String,
+    message: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if message.trim().is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+
+    let sender = {
+        let sessions = state
+            .live_sessions
+            .lock()
+            .map_err(|e| format!("Live session lock error: {e}"))?;
+        let handle = sessions
+            .get(&agent_id)
+            .ok_or("No active live session for this co-founder")?;
+        if handle.session_id != session_id {
+            return Err("Session mismatch — this live session is no longer active".to_string());
+        }
+        handle.sender.clone()
+    };
+
+    sender
+        .send(LiveMessage::UserMessage(message))
+        .await
+        .map_err(|_| "Live session is no longer available".to_string())
+}
+
+#[tauri::command]
+pub async fn end_live_session(
+    agent_id: String,
+    session_id: String,
+    continue_autonomous: Option<bool>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let continue_autonomous = continue_autonomous.unwrap_or(true);
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+
+    let sender = {
+        let mut sessions = state
+            .live_sessions
+            .lock()
+            .map_err(|e| format!("Live session lock error: {e}"))?;
+        let handle = sessions
+            .get(&agent_id)
+            .ok_or("No active live session for this co-founder")?;
+        if handle.session_id != session_id {
+            return Err("Session mismatch — this live session is no longer active".to_string());
+        }
+        handle.cancelled.store(true, Ordering::Relaxed);
+        let sender = handle.sender.clone();
+        sessions.remove(&agent_id);
+        sender
+    };
+
+    state.heartbeat.stop_agent_heartbeat(&agent_id);
+    let _ = state.process_pool.kill_agent(&agent_id);
+    let _ = sender.send(LiveMessage::End).await;
+
+    if continue_autonomous {
+        state.db.update_agent_status(&uuid, &AgentStatus::Running)?;
+        state.heartbeat.start_agent_heartbeat(
+            agent_id.clone(),
+            agent.checkin_interval_secs,
+            app.clone(),
+        );
+        let payload = serde_json::json!({
+            "agent_id": agent_id,
+            "timestamp": Utc::now().to_rfc3339(),
+            "reason": "live-end",
+        });
+        let _ = app.emit("heartbeat-tick", payload);
+    } else {
+        state.db.update_agent_status(&uuid, &AgentStatus::Idle)?;
+    }
+
     Ok(())
 }
 

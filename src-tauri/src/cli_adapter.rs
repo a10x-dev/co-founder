@@ -1,6 +1,9 @@
 use crate::process_pool::ProcessPool;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 
 fn redact_secrets(text: &str, secrets: &[(String, String)]) -> String {
@@ -28,6 +31,7 @@ pub struct TurnConfig {
     pub allowed_tools: String,
     pub env_vars: Vec<(String, String)>,
     pub skip_permissions: bool,
+    pub live_session_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -104,13 +108,21 @@ impl CliAdapter {
         process_pool: Option<&ProcessPool>,
         app_handle: Option<&AppHandle>,
         max_retries: u32,
+        cancel: Option<&Arc<AtomicBool>>,
     ) -> Result<TurnResult, TurnError> {
         let backoff_secs = [30u64, 60, 120];
 
         for attempt in 0..=max_retries {
+            if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+                return Err(TurnError::Fatal("Cancelled".to_string()));
+            }
+
             match self.run_turn(config.clone(), process_pool, app_handle) {
                 Ok(result) => return Ok(result),
                 Err(err) => {
+                    if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+                        return Err(TurnError::Fatal("Cancelled".to_string()));
+                    }
                     let classified = classify_error(&err);
                     if attempt == max_retries {
                         return Err(classified);
@@ -132,6 +144,7 @@ impl CliAdapter {
                                     "agent-output",
                                     serde_json::json!({
                                         "agent_id": config.agent_id,
+                                        "session_id": config.live_session_id.as_ref().cloned(),
                                         "type": "retry",
                                         "attempt": attempt + 1,
                                         "max_retries": max_retries,
@@ -140,7 +153,12 @@ impl CliAdapter {
                                     }),
                                 );
                             }
-                            std::thread::sleep(std::time::Duration::from_secs(delay));
+                            for _ in 0..delay {
+                                if cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false) {
+                                    return Err(TurnError::Fatal("Cancelled".to_string()));
+                                }
+                                std::thread::sleep(std::time::Duration::from_secs(1));
+                            }
                         }
                     }
                 }
@@ -199,11 +217,25 @@ impl CliAdapter {
 
         let run_result = (|| -> Result<TurnResult, String> {
             let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-            let reader = std::io::BufReader::new(stdout);
+            let stderr_handle = child.stderr.take();
 
+            let stderr_thread = std::thread::spawn(move || -> String {
+                let Some(stderr) = stderr_handle else {
+                    return String::new();
+                };
+                let reader = std::io::BufReader::new(stderr);
+                reader
+                    .lines()
+                    .filter_map(|l| l.ok())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+
+            let reader = std::io::BufReader::new(stdout);
             let mut events: Vec<StreamEvent> = Vec::new();
             let mut session_id: Option<String> = None;
             let mut text_output = String::new();
+            let secrets = &config.env_vars;
 
             for line in reader.lines() {
                 let line = line.map_err(|e| format!("Read error: {e}"))?;
@@ -222,7 +254,7 @@ impl CliAdapter {
                     .unwrap_or("unknown")
                     .to_string();
 
-                let safe_line = redact_secrets(&line, &config.env_vars);
+                let safe_line = redact_secrets(&line, secrets);
 
                 events.push(StreamEvent {
                     event_type: event_type.clone(),
@@ -234,10 +266,28 @@ impl CliAdapter {
                         "agent-output",
                         serde_json::json!({
                             "agent_id": config.agent_id,
+                            "session_id": config.live_session_id.as_ref().cloned(),
                             "type": event_type,
                             "raw": safe_line,
                         }),
                     );
+                }
+
+                if let (Some(handle), Some(live_session_id)) =
+                    (app_handle, config.live_session_id.as_ref())
+                {
+                    if let Some(url) = extract_localhost_url(&safe_line) {
+                        if register_preview_url(live_session_id, &url) {
+                            let _ = handle.emit(
+                                "live-preview-detected",
+                                serde_json::json!({
+                                    "agent_id": config.agent_id,
+                                    "session_id": live_session_id,
+                                    "url": url,
+                                }),
+                            );
+                        }
+                    }
                 }
 
                 if event_type == "result" {
@@ -245,35 +295,26 @@ impl CliAdapter {
                         session_id = Some(sid.to_string());
                     }
                     if let Some(result_text) = parsed.get("result").and_then(|v| v.as_str()) {
-                        text_output.push_str(result_text);
+                        text_output.push_str(&redact_secrets(result_text, secrets));
                     }
                 }
 
                 if event_type == "assistant" {
                     if let Some(content) = parsed.get("content").and_then(|v| v.as_str()) {
-                        text_output.push_str(content);
+                        text_output.push_str(&redact_secrets(content, secrets));
                         text_output.push('\n');
                     }
                 }
             }
 
+            let stderr_output = stderr_thread.join().unwrap_or_default();
+
             let status = child.wait().map_err(|e| format!("Wait error: {e}"))?;
             if !status.success() {
-                let stderr = child.stderr.take();
-                let err_msg = if let Some(stderr) = stderr {
-                    let reader = std::io::BufReader::new(stderr);
-                    let collected = reader
-                        .lines()
-                        .filter_map(|l| l.ok())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if collected.trim().is_empty() {
-                        format!("claude exited with status {status}")
-                    } else {
-                        collected
-                    }
-                } else {
+                let err_msg = if stderr_output.trim().is_empty() {
                     format!("claude exited with status {status}")
+                } else {
+                    stderr_output
                 };
                 if events.is_empty() {
                     return Err(format!("Claude CLI failed: {err_msg}"));
@@ -292,6 +333,46 @@ impl CliAdapter {
         }
 
         run_result
+    }
+}
+
+fn extract_localhost_url(text: &str) -> Option<String> {
+    for token in text.split_whitespace() {
+        let normalized = token
+            .trim_matches(|c: char| matches!(c, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'))
+            .trim_end_matches(|c: char| matches!(c, '.' | ',' | ';' | ')' | ']' | '}' | '\\' | '/'));
+
+        if normalized.starts_with("http://localhost")
+            || normalized.starts_with("https://localhost")
+            || normalized.starts_with("http://127.0.0.1")
+            || normalized.starts_with("https://127.0.0.1")
+        {
+            return Some(normalized.to_string());
+        }
+
+        if normalized.starts_with("localhost:") || normalized.starts_with("127.0.0.1:") {
+            return Some(format!("http://{normalized}"));
+        }
+    }
+    None
+}
+
+fn preview_registry() -> &'static Mutex<HashMap<String, HashSet<String>>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, HashSet<String>>>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_preview_url(session_id: &str, url: &str) -> bool {
+    let Ok(mut registry) = preview_registry().lock() else {
+        return true;
+    };
+    let seen = registry.entry(session_id.to_string()).or_default();
+    seen.insert(url.to_string())
+}
+
+pub fn clear_live_preview_urls(session_id: &str) {
+    if let Ok(mut registry) = preview_registry().lock() {
+        registry.remove(session_id);
     }
 }
 
