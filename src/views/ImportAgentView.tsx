@@ -3,23 +3,11 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { FolderOpen, FolderCheck } from "lucide-react";
 import type { ImportAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
-import { importAgent, readTextFile } from "@/lib/api";
+import { importAgent, inspectProjectFolder } from "@/lib/api";
 import FriendlyError from "@/components/FriendlyError";
 import { extractError } from "@/lib/friendlyErrors";
 
 const STEPS = ["Project", "Mission", "Schedule"] as const;
-
-const PROJECT_TYPE_BADGES: Record<string, string> = {
-  "package.json": "Node.js",
-  "Cargo.toml": "Rust",
-  "requirements.txt": "Python",
-  "pyproject.toml": "Python",
-  "go.mod": "Go",
-  "pom.xml": "Java",
-  "Gemfile": "Ruby",
-  "composer.json": "PHP",
-  "pubspec.yaml": "Flutter",
-};
 
 interface ImportAgentViewProps {
   onImported: () => void;
@@ -52,36 +40,10 @@ export default function ImportAgentView({ onImported, onCancel }: ImportAgentVie
 
       const folderName = selected.split("/").filter(Boolean).pop() ?? "My Project";
       setProjectName(folderName);
-
-      for (const [filename, label] of Object.entries(PROJECT_TYPE_BADGES)) {
-        try {
-          await readTextFile(`${selected}/${filename}`);
-          setDetectedType(label);
-          break;
-        } catch {
-          // file doesn't exist
-        }
-      }
-
-      try {
-        await readTextFile(`${selected}/.founder/MISSION.md`);
-        setAlreadyHasFounder(true);
-      } catch {
-        setAlreadyHasFounder(false);
-      }
-
-      try {
-        const readme = await readTextFile(`${selected}/README.md`);
-        const firstPara = readme
-          .split("\n")
-          .map((l) => l.trim())
-          .filter((l) => l && !l.startsWith("#"))
-          .slice(0, 3)
-          .join(" ");
-        if (firstPara) setMission(firstPara);
-      } catch {
-        // no README
-      }
+      const info = await inspectProjectFolder(selected);
+      setDetectedType(info.detected_type ?? null);
+      setAlreadyHasFounder(info.already_has_founder);
+      if (info.readme_summary) setMission(info.readme_summary);
     } catch {
       setError("Could not open folder picker");
     }

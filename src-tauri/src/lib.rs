@@ -49,7 +49,6 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|app| {
@@ -82,24 +81,19 @@ pub fn run() {
                     }
                     "pause_all" => {
                         let state = app.state::<AppState>();
-                        if let Ok(agents) = state.db.get_agents() {
-                            for agent in agents
-                                .into_iter()
-                                .filter(|a| a.status == models::AgentStatus::Running)
-                            {
-                                let agent_id = agent.id.to_string();
-                                state.heartbeat.stop_agent_heartbeat(&agent_id);
-                                let _ = state.process_pool.kill_agent(&agent_id);
-                                let _ = state
-                                    .db
-                                    .update_agent_status(&agent.id, &models::AgentStatus::Paused);
-                            }
-                        }
+                        pause_running_agents(
+                            state.db.as_ref(),
+                            state.process_pool.as_ref(),
+                            state.heartbeat.as_ref(),
+                        );
                     }
                     "quit" => {
                         let state = app.state::<AppState>();
-                        state.heartbeat.stop_all();
-                        let _ = state.process_pool.kill_all();
+                        pause_running_agents(
+                            state.db.as_ref(),
+                            state.process_pool.as_ref(),
+                            state.heartbeat.as_ref(),
+                        );
                         app.exit(0);
                     }
                     _ => {}
@@ -114,6 +108,10 @@ pub fn run() {
             let cli = state.cli.clone();
             let app_handle = app.handle().clone();
 
+            // If the app was exited unexpectedly, stale "running" statuses can remain.
+            // Normalize them to paused so UI and runtime state are consistent at launch.
+            pause_running_agents(db.as_ref(), process_pool.as_ref(), heartbeat.as_ref());
+
             app.listen("heartbeat-tick", move |event| {
                 let payload = event.payload();
 
@@ -126,6 +124,10 @@ pub fn run() {
                     Some(id) => id.to_string(),
                     None => return,
                 };
+                let reason = parsed
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 let db = db.clone();
                 let process_pool = process_pool.clone();
@@ -134,7 +136,7 @@ pub fn run() {
                 let app_handle = app_handle.clone();
 
                 tauri::async_runtime::spawn(async move {
-                    run_heartbeat_tick(agent_id, db, process_pool, heartbeat, cli, app_handle).await;
+                    run_heartbeat_tick(agent_id, reason, db, process_pool, heartbeat, cli, app_handle).await;
                 });
             });
 
@@ -189,6 +191,7 @@ pub fn run() {
             commands::update_agent_status,
             commands::delete_agent,
             commands::get_work_sessions,
+            commands::get_work_sessions_export,
             commands::get_global_settings,
             commands::update_global_settings,
             commands::start_agent,
@@ -196,6 +199,7 @@ pub fn run() {
             commands::stop_agent,
             commands::import_agent,
             commands::read_text_file,
+            commands::inspect_project_folder,
             commands::detect_claude_cli,
             commands::get_agent_env_vars,
             commands::set_agent_env_var,
@@ -246,11 +250,32 @@ pub fn run() {
             if minimize {
                 api.prevent_exit();
             } else {
-                state.heartbeat.stop_all();
-                let _ = state.process_pool.kill_all();
+                pause_running_agents(
+                    state.db.as_ref(),
+                    state.process_pool.as_ref(),
+                    state.heartbeat.as_ref(),
+                );
             }
         }
     });
+}
+
+fn pause_running_agents(
+    db: &db::Database,
+    process_pool: &process_pool::ProcessPool,
+    heartbeat: &heartbeat::HeartbeatScheduler,
+) {
+    if let Ok(agents) = db.get_agents() {
+        for agent in agents
+            .into_iter()
+            .filter(|a| a.status == models::AgentStatus::Running)
+        {
+            let agent_id = agent.id.to_string();
+            heartbeat.stop_agent_heartbeat(&agent_id);
+            let _ = process_pool.kill_agent(&agent_id);
+            let _ = db.update_agent_status(&agent.id, &models::AgentStatus::Paused);
+        }
+    }
 }
 
 fn permanently_fail_agent(
@@ -266,6 +291,7 @@ fn permanently_fail_agent(
 
 async fn run_heartbeat_tick(
     agent_id: String,
+    reason: Option<String>,
     db: Arc<db::Database>,
     process_pool: Arc<process_pool::ProcessPool>,
     heartbeat: Arc<heartbeat::HeartbeatScheduler>,
@@ -365,9 +391,15 @@ async fn run_heartbeat_tick(
     let agent_id_for_session = agent_id.clone();
 
     let session_result = tauri::async_runtime::spawn_blocking(move || {
+        let trigger = if reason.as_deref() == Some("manual") {
+            models::SessionTrigger::Manual
+        } else {
+            models::SessionTrigger::Heartbeat
+        };
         let result = work_session::WorkSessionEngine::run_session(
             &cli_adapter,
             &agent_for_session,
+            trigger,
             &pool_for_session,
             &db_for_session,
             app_for_session,

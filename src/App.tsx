@@ -10,7 +10,7 @@ import OnboardingView from "@/views/OnboardingView";
 import SettingsView from "@/views/SettingsView";
 import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
-import { detectClaudeCli, getGlobalSettings } from "@/lib/api";
+import { detectClaudeCli, getGlobalSettings, getWorkSessionsExport } from "@/lib/api";
 import type { Agent, WorkSessionLog } from "@/types";
 
 type View = "home" | "create" | "import" | "settings" | "journey";
@@ -70,9 +70,15 @@ export default function App() {
     setView("import");
   };
 
-  const handleShareJourney = (agent: Agent, sessions: WorkSessionLog[]) => {
-    setJourneyData({ agent, sessions });
-    setView("journey");
+  const handleShareJourney = async (agent: Agent) => {
+    try {
+      const sessions = await getWorkSessionsExport(agent.id);
+      setJourneyData({ agent, sessions });
+      setView("journey");
+    } catch (err) {
+      console.error("Failed to export sessions:", err);
+      notify("Export failed", "Could not load sessions for export.");
+    }
   };
 
   const selectedAgent = selectedAgentId

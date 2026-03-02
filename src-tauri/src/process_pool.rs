@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use chrono::{DateTime, Utc};
 use tokio::sync::Semaphore;
 
@@ -12,7 +13,8 @@ pub struct ProcessInfo {
 }
 
 pub struct ProcessPool {
-    pub max_concurrent: usize,
+    max_concurrent: Arc<AtomicUsize>,
+    permit_debt: Arc<AtomicUsize>,
     running: Arc<Mutex<HashMap<String, ProcessInfo>>>,
     pending: Arc<Mutex<HashSet<String>>>,
     semaphore: Arc<Semaphore>,
@@ -21,18 +23,66 @@ pub struct ProcessPool {
 impl ProcessPool {
     pub fn new(max: usize) -> Self {
         ProcessPool {
-            max_concurrent: max,
+            max_concurrent: Arc::new(AtomicUsize::new(max)),
+            permit_debt: Arc::new(AtomicUsize::new(0)),
             running: Arc::new(Mutex::new(HashMap::new())),
             pending: Arc::new(Mutex::new(HashSet::new())),
             semaphore: Arc::new(Semaphore::new(max)),
         }
     }
 
+    pub fn max_concurrent(&self) -> usize {
+        self.max_concurrent.load(Ordering::Relaxed)
+    }
+
+    pub fn update_max_concurrent(&self, new_max: usize) {
+        let normalized = new_max.max(1);
+        let old = self.max_concurrent.swap(normalized, Ordering::Relaxed);
+        if normalized > old {
+            let mut to_add = normalized - old;
+
+            // If we previously lowered the cap while all permits were in use,
+            // consume growth against pending shrink debt first.
+            let debt = self.permit_debt.load(Ordering::Relaxed);
+            if debt > 0 {
+                let clear = to_add.min(debt);
+                if clear > 0 {
+                    self.permit_debt.fetch_sub(clear, Ordering::Relaxed);
+                    to_add -= clear;
+                }
+            }
+
+            if to_add > 0 {
+                self.semaphore.add_permits(to_add);
+            }
+        } else if normalized < old {
+            let to_remove = old - normalized;
+            let removed = self.semaphore.forget_permits(to_remove);
+            if removed < to_remove {
+                self.permit_debt
+                    .fetch_add(to_remove - removed, Ordering::Relaxed);
+            }
+        }
+    }
+
     pub fn try_acquire(&self) -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+        self.reconcile_permit_debt();
         self.semaphore
             .clone()
             .try_acquire_owned()
             .map_err(|_| "No available slots".to_string())
+    }
+
+    fn reconcile_permit_debt(&self) {
+        let debt = self.permit_debt.load(Ordering::Relaxed);
+        if debt == 0 {
+            return;
+        }
+
+        let removed = self.semaphore.forget_permits(debt);
+        if removed > 0 {
+            self.permit_debt.fetch_sub(removed, Ordering::Relaxed);
+        }
     }
 
     pub fn mark_pending(&self, agent_id: &str) -> bool {

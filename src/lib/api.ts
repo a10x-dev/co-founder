@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -23,6 +23,10 @@ export async function deleteAgent(id: string, removeFounderFiles = false): Promi
 
 export async function getWorkSessions(agentId: string): Promise<WorkSessionLog[]> {
   return invoke("get_work_sessions", { agentId });
+}
+
+export async function getWorkSessionsExport(agentId: string): Promise<WorkSessionLog[]> {
+  return invoke("get_work_sessions_export", { agentId });
 }
 
 export async function getGlobalSettings(): Promise<GlobalSettings> {
@@ -49,8 +53,12 @@ export async function importAgent(req: ImportAgentRequest): Promise<Agent> {
   return invoke("import_agent", { req });
 }
 
-export async function readTextFile(path: string): Promise<string> {
-  return invoke("read_text_file", { path });
+export async function readTextFile(agentId: string, path: string): Promise<string> {
+  return invoke("read_text_file", { agentId, path });
+}
+
+export async function inspectProjectFolder(path: string): Promise<FolderInspectionResponse> {
+  return invoke("inspect_project_folder", { path });
 }
 
 export async function detectClaudeCli(): Promise<string | null> {
@@ -69,8 +77,8 @@ export async function deleteAgentEnvVar(agentId: string, key: string): Promise<v
   return invoke("delete_agent_env_var", { agentId, key });
 }
 
-export async function writeTextFile(path: string, content: string): Promise<void> {
-  return invoke("write_text_file", { path, content });
+export async function writeTextFile(agentId: string, path: string, content: string): Promise<void> {
+  return invoke("write_text_file", { agentId, path, content });
 }
 
 export async function triggerManualSession(id: string): Promise<void> {

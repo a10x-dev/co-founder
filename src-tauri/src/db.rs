@@ -342,9 +342,17 @@ impl Database {
     }
 
     pub fn get_work_sessions(&self, agent_id: &Uuid) -> Result<Vec<WorkSessionLog>, String> {
+        self.get_work_sessions_with_limit(agent_id, 50)
+    }
+
+    pub fn get_work_sessions_export(&self, agent_id: &Uuid) -> Result<Vec<WorkSessionLog>, String> {
+        self.get_work_sessions_with_limit(agent_id, 1000)
+    }
+
+    fn get_work_sessions_with_limit(&self, agent_id: &Uuid, limit: u32) -> Result<Vec<WorkSessionLog>, String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         let mut stmt = conn
-            .prepare("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT 50")
+            .prepare(&format!("SELECT id, agent_id, session_id, started_at, ended_at, turns, trigger, outcome, summary, events_json, input_tokens, output_tokens, cost_usd FROM work_sessions WHERE agent_id = ?1 ORDER BY started_at DESC LIMIT {limit}"))
             .map_err(|e| format!("Query error: {e}"))?;
 
         let sessions = stmt

@@ -87,6 +87,12 @@ export interface WorkspaceHealth {
   founder_exists: boolean;
 }
 
+export interface FolderInspectionResponse {
+  detected_type: string | null;
+  already_has_founder: boolean;
+  readme_summary: string | null;
+}
+
 export interface Artifact {
   id: string;
   title: string;

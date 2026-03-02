@@ -11,8 +11,11 @@ impl StateManager {
         mission: &str,
     ) -> Result<String, String> {
         let expanded_root = expand_tilde(root);
-        let slug = slugify(name);
-        let workspace_path = format!("{}/{}", expanded_root, slug);
+        let slug = {
+            let s = slugify(name);
+            if s.is_empty() { "project".to_string() } else { s }
+        };
+        let workspace_path = unique_workspace_path(&expanded_root, &slug);
         let founder_path = format!("{}/.founder", workspace_path);
 
         fs::create_dir_all(&founder_path)
@@ -241,6 +244,22 @@ fn expand_tilde(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+fn unique_workspace_path(root: &str, base_slug: &str) -> String {
+    let base = format!("{}/{}", root.trim_end_matches('/'), base_slug);
+    if !Path::new(&base).exists() {
+        return base;
+    }
+
+    for i in 2.. {
+        let candidate = format!("{}/{}-{}", root.trim_end_matches('/'), base_slug, i);
+        if !Path::new(&candidate).exists() {
+            return candidate;
+        }
+    }
+
+    base
 }
 
 fn default_soul_template(personality: &str) -> String {

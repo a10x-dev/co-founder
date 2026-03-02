@@ -268,7 +268,7 @@ function parseSessionTimeline(eventsJson: string): ClassifiedEvent[] {
 export interface AgentDetailViewProps {
   agent: Agent;
   onRefetch: () => void;
-  onShareJourney: (agent: Agent, sessions: WorkSessionLog[]) => void;
+  onShareJourney: (agent: Agent) => Promise<void> | void;
   onDeleted: () => void;
 }
 
@@ -368,12 +368,12 @@ export default function AgentDetailView({
     switch (activeTab) {
       case "secrets": getAgentEnvVars(id).then(setEnvVars).catch(() => {}); break;
       case "files":
-        readTextFile(`${ws}/.founder/SOUL.md`).then(setSoulContent).catch(() => setSoulContent(""));
-        readTextFile(`${ws}/.founder/MISSION.md`).then(setMissionContent).catch(() => setMissionContent(""));
-        readTextFile(`${ws}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => setMemoryContent(""));
+        readTextFile(agent.id, `${ws}/.founder/SOUL.md`).then(setSoulContent).catch(() => setSoulContent(""));
+        readTextFile(agent.id, `${ws}/.founder/MISSION.md`).then(setMissionContent).catch(() => setMissionContent(""));
+        readTextFile(agent.id, `${ws}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => setMemoryContent(""));
         break;
       case "messages":
-        readTextFile(`${ws}/.founder/INBOX.md`).then(setInboxContent).catch(() => setInboxContent(""));
+        readTextFile(agent.id, `${ws}/.founder/INBOX.md`).then(setInboxContent).catch(() => setInboxContent(""));
         break;
       case "artifacts": readArtifactsManifest(id).then(setArtifacts).catch(() => setArtifacts([])); break;
       case "tools": readToolsManifest(id).then(setTools).catch(() => setTools([])); break;
@@ -489,12 +489,12 @@ export default function AgentDetailView({
   const toggleDetails = (id: string) => setExpandedDetails((prev) => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const handleAddEnvVar = async () => { if (!newEnvKey.trim()) return; await setAgentEnvVar(agent.id, newEnvKey.trim(), newEnvValue); setNewEnvKey(""); setNewEnvValue(""); getAgentEnvVars(agent.id).then(setEnvVars).catch(() => {}); };
   const handleDeleteEnvVar = async (key: string) => { await deleteAgentEnvVar(agent.id, key); getAgentEnvVars(agent.id).then(setEnvVars).catch(() => {}); };
-  const handleSaveFile = async (filename: string, content: string) => { setFileSaving(true); try { await writeTextFile(`${agent.workspace}/.founder/${filename}`, content); } finally { setFileSaving(false); } };
+  const handleSaveFile = async (filename: string, content: string) => { setFileSaving(true); try { await writeTextFile(agent.id, `${agent.workspace}/.founder/${filename}`, content); } finally { setFileSaving(false); } };
   const handleRunNow = async () => { setBusy(true); try { await triggerManualSession(agent.id); onRefetch(); } finally { setBusy(false); } };
   const handleSendMessage = async () => {
     if (!messageText.trim()) return;
     setMessageSending(true);
-    try { await sendMessageToAgent(agent.id, messageText.trim()); setMessageText(""); readTextFile(`${agent.workspace}/.founder/INBOX.md`).then(setInboxContent).catch(() => {}); }
+    try { await sendMessageToAgent(agent.id, messageText.trim()); setMessageText(""); readTextFile(agent.id, `${agent.workspace}/.founder/INBOX.md`).then(setInboxContent).catch(() => {}); }
     finally { setMessageSending(false); }
   };
   const handleRepair = async () => {
@@ -790,7 +790,7 @@ export default function AgentDetailView({
           <div style={{ marginTop: 32 }}>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-[17px] font-semibold" style={{ color: "var(--text-primary)" }}>Past work sessions</h2>
-              <button className={ghostButton} style={{ color: "var(--text-secondary)" }} onClick={() => onShareJourney(agent, sessions)}>
+              <button className={ghostButton} style={{ color: "var(--text-secondary)" }} onClick={() => onShareJourney(agent)}>
                 <Share2 size={14} strokeWidth={2} /> Share journey
               </button>
             </div>

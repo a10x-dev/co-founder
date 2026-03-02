@@ -18,6 +18,13 @@ pub struct WorkspaceHealthResponse {
     pub founder_exists: bool,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct FolderInspectionResponse {
+    pub detected_type: Option<String>,
+    pub already_has_founder: bool,
+    pub readme_summary: Option<String>,
+}
+
 #[tauri::command]
 pub async fn get_agents(state: tauri::State<'_, AppState>) -> Result<Vec<Agent>, String> {
     state.db.get_agents()
@@ -88,6 +95,15 @@ pub async fn get_work_sessions(
 }
 
 #[tauri::command]
+pub async fn get_work_sessions_export(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<WorkSessionLog>, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    state.db.get_work_sessions_export(&uuid)
+}
+
+#[tauri::command]
 pub async fn get_global_settings(
     state: tauri::State<'_, AppState>,
 ) -> Result<GlobalSettings, String> {
@@ -104,6 +120,10 @@ pub async fn update_global_settings(
     if let Ok(mut cli) = state.cli.write() {
         *cli = crate::cli_adapter::CliAdapter::new(settings.claude_cli_path.clone());
     }
+
+    state
+        .process_pool
+        .update_max_concurrent(settings.max_concurrent_agents.max(1) as usize);
 
     Ok(())
 }
@@ -214,16 +234,21 @@ pub async fn delete_agent(
 }
 
 #[tauri::command]
-pub async fn read_text_file(path: String) -> Result<String, String> {
+pub async fn read_text_file(
+    agent_id: String,
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
     let expanded = expand_home(&path);
     let canonical = std::fs::canonicalize(&expanded)
         .map_err(|e| format!("Could not read file: {e}"))?;
+    let workspace = std::fs::canonicalize(&agent.workspace)
+        .map_err(|e| format!("Could not resolve workspace path: {e}"))?;
 
-    let home = std::env::var("HOME").map_err(|_| "Could not determine HOME directory")?;
-    let home_path = std::path::Path::new(&home);
-
-    if !canonical.starts_with(home_path) {
-        return Err("Reading files outside your home directory is not allowed".into());
+    if !canonical.starts_with(&workspace) {
+        return Err("Reading files outside the agent workspace is not allowed".into());
     }
 
     fs::read_to_string(canonical).map_err(|e| format!("Could not read file: {e}"))
@@ -274,19 +299,84 @@ pub async fn delete_agent_env_var(
 }
 
 #[tauri::command]
-pub async fn write_text_file(path: String, content: String) -> Result<(), String> {
+pub async fn write_text_file(
+    agent_id: String,
+    path: String,
+    content: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
     let expanded = expand_home(&path);
     let canonical_parent = std::path::Path::new(&expanded)
         .parent()
         .ok_or("Invalid path")?;
-    let home = std::env::var("HOME").map_err(|_| "Could not determine HOME directory")?;
-    let home_path = std::path::Path::new(&home);
     let resolved_parent = std::fs::canonicalize(canonical_parent)
         .map_err(|e| format!("Could not resolve path: {e}"))?;
-    if !resolved_parent.starts_with(home_path) {
-        return Err("Writing files outside your home directory is not allowed".into());
+    let workspace = std::fs::canonicalize(&agent.workspace)
+        .map_err(|e| format!("Could not resolve workspace path: {e}"))?;
+
+    if !resolved_parent.starts_with(&workspace) {
+        return Err("Writing files outside the agent workspace is not allowed".into());
     }
     fs::write(&expanded, content).map_err(|e| format!("Could not write file: {e}"))
+}
+
+#[tauri::command]
+pub async fn inspect_project_folder(path: String) -> Result<FolderInspectionResponse, String> {
+    let expanded = expand_home(&path);
+    let project = std::path::Path::new(&expanded);
+    if !project.exists() {
+        return Err("Folder does not exist".into());
+    }
+    if !project.is_dir() {
+        return Err("Path is not a folder".into());
+    }
+
+    let markers: [(&str, &str); 9] = [
+        ("package.json", "Node.js"),
+        ("Cargo.toml", "Rust"),
+        ("requirements.txt", "Python"),
+        ("pyproject.toml", "Python"),
+        ("go.mod", "Go"),
+        ("pom.xml", "Java"),
+        ("Gemfile", "Ruby"),
+        ("composer.json", "PHP"),
+        ("pubspec.yaml", "Flutter"),
+    ];
+
+    let detected_type = markers
+        .iter()
+        .find_map(|(filename, label)| {
+            let marker = project.join(filename);
+            if marker.exists() { Some((*label).to_string()) } else { None }
+        });
+
+    let already_has_founder = project.join(".founder").join("MISSION.md").exists();
+    let readme_summary = project.join("README.md");
+    let readme_summary = if readme_summary.exists() {
+        match fs::read_to_string(readme_summary) {
+            Ok(content) => {
+                let summary = content
+                    .lines()
+                    .map(|l| l.trim())
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if summary.is_empty() { None } else { Some(summary) }
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    Ok(FolderInspectionResponse {
+        detected_type,
+        already_has_founder,
+        readme_summary,
+    })
 }
 
 #[tauri::command]
@@ -553,12 +643,14 @@ pub async fn save_integration(
         .and_then(|o| o.entry("mcpServers").or_insert_with(|| serde_json::json!({})).as_object_mut())
         .ok_or("Invalid .mcp.json structure")?;
 
-    let mut server_config = serde_json::json!({
+    let server_config = serde_json::json!({
         "command": command,
         "args": args,
     });
     if !env.is_empty() {
-        server_config["env"] = serde_json::to_value(&env).unwrap_or_default();
+        for (key, value) in env {
+            state.db.set_agent_env_var(&uuid, &key, &value)?;
+        }
     }
 
     servers.insert(server_key, server_config);
