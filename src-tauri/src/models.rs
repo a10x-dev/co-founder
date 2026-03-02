@@ -154,11 +154,6 @@ pub struct AgentEnvVar {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct HeartbeatConfig {
-    pub every_secs: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkSessionLog {
     pub id: Uuid,
     pub agent_id: Uuid,

@@ -85,10 +85,3 @@ pub fn decrypt(encoded: &str) -> Result<String, String> {
 
     String::from_utf8(plaintext).map_err(|e| format!("UTF-8 error: {e}"))
 }
-
-/// Returns true if the value looks like it was encrypted (base64 with correct structure)
-pub fn is_encrypted(value: &str) -> bool {
-    B64.decode(value)
-        .map(|bytes| bytes.len() >= 13)
-        .unwrap_or(false)
-}

@@ -12,7 +12,6 @@ pub struct WorkSessionEngine;
 
 pub struct SessionResult {
     pub log: WorkSessionLog,
-    pub is_rate_limited: bool,
     pub requested_next_checkin_secs: Option<u64>,
 }
 
@@ -243,9 +242,9 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         let result = match cli.run_turn_with_retry(config, Some(pool), Some(&app_handle), 2) {
             Ok(result) => result,
             Err(turn_err) => {
-                let (outcome, is_rate_limited) = match &turn_err {
-                    TurnError::RateLimited(_) => (SessionOutcome::RateLimited, true),
-                    _ => (SessionOutcome::Error, false),
+                let outcome = match &turn_err {
+                    TurnError::RateLimited(_) => SessionOutcome::RateLimited,
+                    _ => SessionOutcome::Error,
                 };
                 let log = WorkSessionLog {
                     id: session_uuid,
@@ -263,7 +262,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     cost_usd: 0.0,
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
+                return Ok(SessionResult { log, requested_next_checkin_secs: None });
             }
         };
 
@@ -292,7 +291,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                 cost_usd: cost,
             };
             db.log_work_session(&log)?;
-            return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
+            return Ok(SessionResult { log, requested_next_checkin_secs: requested });
         }
 
         let session_start = std::time::Instant::now();
@@ -326,7 +325,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                     cost_usd: cost,
                 };
                 db.log_work_session(&log)?;
-                return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
+                return Ok(SessionResult { log, requested_next_checkin_secs: requested });
             }
 
             let sid = match &final_session_id {
@@ -377,13 +376,13 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                             cost_usd: cost,
                         };
                         db.log_work_session(&log)?;
-                        return Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested });
+                        return Ok(SessionResult { log, requested_next_checkin_secs: requested });
                     }
                 }
                 Err(turn_err) => {
-                    let (outcome, is_rate_limited) = match &turn_err {
-                        TurnError::RateLimited(_) => (SessionOutcome::RateLimited, true),
-                        _ => (SessionOutcome::Error, false),
+                    let outcome = match &turn_err {
+                        TurnError::RateLimited(_) => SessionOutcome::RateLimited,
+                        _ => SessionOutcome::Error,
                     };
                     let (it, ot, cost) = parse_token_usage(&all_events);
                     let log = WorkSessionLog {
@@ -402,7 +401,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         cost_usd: cost,
                     };
                     db.log_work_session(&log)?;
-                    return Ok(SessionResult { log, is_rate_limited, requested_next_checkin_secs: None });
+                    return Ok(SessionResult { log, requested_next_checkin_secs: None });
                 }
             }
         }
@@ -425,7 +424,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             cost_usd: cost,
         };
         db.log_work_session(&log)?;
-        Ok(SessionResult { log, is_rate_limited: false, requested_next_checkin_secs: requested })
+        Ok(SessionResult { log, requested_next_checkin_secs: requested })
     }
 }
 

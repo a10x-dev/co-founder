@@ -6,7 +6,6 @@ mod state_manager;
 mod process_pool;
 mod heartbeat;
 mod work_session;
-mod event_translator;
 mod commands;
 mod daily_report;
 

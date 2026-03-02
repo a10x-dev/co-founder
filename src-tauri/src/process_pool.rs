@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use tokio::sync::Semaphore;
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct ProcessInfo {
     pub agent_id: String,
     pub pid: u32,
