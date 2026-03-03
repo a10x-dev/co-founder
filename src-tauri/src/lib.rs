@@ -254,6 +254,7 @@ pub fn run() {
             commands::delete_schedule_entry,
             commands::toggle_schedule_entry,
             commands::save_inbox_images,
+            commands::update_agent_behavior,
             commands::start_pair_session,
             commands::send_pair_message,
             commands::end_pair_session,

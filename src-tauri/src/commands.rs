@@ -696,6 +696,33 @@ pub async fn update_autonomy_level(
 }
 
 #[tauri::command]
+pub async fn update_agent_behavior(
+    id: String,
+    autonomy_level: String,
+    checkin_interval_secs: u64,
+    max_session_duration_secs: u64,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&id).map_err(|e| format!("Invalid UUID: {e}"))?;
+
+    let autonomy = AutonomyLevel::from_str(&autonomy_level);
+    state.db.update_autonomy_level(&uuid, &autonomy)?;
+
+    let interval = checkin_interval_secs.clamp(60, 86400);
+    state.db.update_checkin_interval(&uuid, interval)?;
+
+    let duration = max_session_duration_secs.clamp(300, 7200);
+    state.db.update_max_session_duration(&uuid, duration)?;
+
+    if state.heartbeat.get_interval(&id).is_some() {
+        state.heartbeat.update_interval(&id, interval, app);
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn check_workspace_health(
     agent_id: String,
     state: tauri::State<'_, AppState>,

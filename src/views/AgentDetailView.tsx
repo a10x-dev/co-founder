@@ -35,6 +35,7 @@ import { formatRelativeTime } from "@/lib/formatTime";
 import OverviewTab from "@/components/agent-detail/OverviewTab";
 import InboxTab from "@/components/agent-detail/InboxTab";
 import ScheduleTab from "@/components/agent-detail/ScheduleTab";
+import BehaviorTab from "@/components/agent-detail/BehaviorTab";
 import SettingsTab from "@/components/agent-detail/SettingsTab";
 import ArtifactsTab from "@/components/agent-detail/ArtifactsTab";
 import ToolsTab from "@/components/agent-detail/ToolsTab";
@@ -90,7 +91,7 @@ export interface AgentDetailViewProps {
   onDeleted: () => void;
 }
 
-type TabKey = "overview" | "inbox" | "schedule" | "settings" | "artifacts" | "tools" | "reports";
+type TabKey = "overview" | "inbox" | "schedule" | "artifacts" | "behavior" | "settings" | "tools" | "reports";
 
 export default function AgentDetailView({
   agent,
@@ -151,11 +152,13 @@ export default function AgentDetailView({
       case "schedule":
         getSchedule(id).then(setScheduleEntries).catch(() => setScheduleEntries([]));
         break;
-      case "settings":
-        getAgentEnvVars(id).then(setEnvVars).catch(() => {});
+      case "behavior":
         readTextFile(id, `${ws}/.founder/SOUL.md`).then(setSoulContent).catch(() => setSoulContent(""));
         readTextFile(id, `${ws}/.founder/MISSION.md`).then(setMissionContent).catch(() => setMissionContent(""));
         readTextFile(id, `${ws}/.founder/MEMORY.md`).then(setMemoryContent).catch(() => setMemoryContent(""));
+        break;
+      case "settings":
+        getAgentEnvVars(id).then(setEnvVars).catch(() => {});
         break;
     }
   }, [agent.id, agent.workspace, activeTab]);
@@ -300,8 +303,9 @@ export default function AgentDetailView({
     { key: "overview", label: "Overview" },
     { key: "inbox", label: "Inbox" },
     { key: "schedule", label: "Schedule" },
-    { key: "settings", label: "Settings" },
     ...(artifacts.length > 0 ? [{ key: "artifacts" as TabKey, label: "Artifacts", badge: artifacts.length }] : []),
+    { key: "behavior", label: "Behavior" },
+    { key: "settings", label: "Settings" },
     ...(tools.length > 0 ? [{ key: "tools" as TabKey, label: "Tools", badge: tools.length }] : []),
     ...(reports.length > 0 ? [{ key: "reports" as TabKey, label: "Reports" }] : []),
   ];
@@ -499,6 +503,18 @@ export default function AgentDetailView({
       {activeTab === "schedule" && (
         <ScheduleTab agent={agent} entries={scheduleEntries} setEntries={setScheduleEntries} />
       )}
+      {activeTab === "behavior" && (
+        <BehaviorTab
+          agent={agent}
+          onRefetch={onRefetch}
+          soulContent={soulContent}
+          setSoulContent={setSoulContent}
+          missionContent={missionContent}
+          setMissionContent={setMissionContent}
+          memoryContent={memoryContent}
+          setMemoryContent={setMemoryContent}
+        />
+      )}
       {activeTab === "settings" && (
         <SettingsTab
           agent={agent}
@@ -506,12 +522,6 @@ export default function AgentDetailView({
           onDeleted={onDeleted}
           envVars={envVars}
           setEnvVars={setEnvVars}
-          soulContent={soulContent}
-          setSoulContent={setSoulContent}
-          missionContent={missionContent}
-          setMissionContent={setMissionContent}
-          memoryContent={memoryContent}
-          setMemoryContent={setMemoryContent}
           gitStatus={gitStatus}
           setGitStatus={setGitStatus}
           sessionsCount={sessions.length}

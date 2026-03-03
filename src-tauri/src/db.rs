@@ -328,6 +328,16 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_max_session_duration(&self, id: &Uuid, secs: u64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE agents SET max_session_duration_secs = ?1 WHERE id = ?2",
+            params![secs as i64, id.to_string()],
+        )
+        .map_err(|e| format!("Update error: {e}"))?;
+        Ok(())
+    }
+
     pub fn update_last_heartbeat(&self, id: &Uuid, timestamp: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
         conn.execute(

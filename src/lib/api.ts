@@ -112,6 +112,15 @@ export async function updateAutonomyLevel(id: string, level: string): Promise<vo
   return invoke("update_autonomy_level", { id, level });
 }
 
+export async function updateAgentBehavior(
+  id: string,
+  autonomyLevel: string,
+  checkinIntervalSecs: number,
+  maxSessionDurationSecs: number,
+): Promise<void> {
+  return invoke("update_agent_behavior", { id, autonomyLevel, checkinIntervalSecs, maxSessionDurationSecs });
+}
+
 export async function checkWorkspaceHealth(agentId: string): Promise<WorkspaceHealth> {
   return invoke("check_workspace_health", { agentId });
 }

@@ -21,17 +21,17 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-grow textarea
-  const maxHeight = typeof window !== "undefined" ? Math.round(window.innerHeight * 0.25) : 200;
+  const maxHeight = 420;
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    const clamped = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = "0px";
+    const desired = el.scrollHeight;
+    const clamped = Math.min(desired, maxHeight);
     el.style.height = `${clamped}px`;
-    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
-  }, [messageText, maxHeight]);
+    el.style.overflowY = desired > maxHeight ? "auto" : "hidden";
+  }, [messageText]);
 
   // Image attachment
   const attachFiles = useCallback(async (files: FileList | File[]) => {
@@ -179,7 +179,7 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
           onPaste={handlePaste}
           placeholder="Type a message for your co-founder…"
           rows={1}
-          className="flex-1 resize-none bg-transparent text-[14px] outline-none leading-relaxed px-3 pt-2.5"
+          className="w-full resize-none bg-transparent text-[14px] outline-none leading-relaxed px-3 pt-2.5"
           style={{
             color: "var(--text-primary)",
             minHeight: 36,
