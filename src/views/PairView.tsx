@@ -9,13 +9,13 @@ import {
   Plus,
   Send,
   StopCircle,
-  Bot,
   ChevronDown,
   ChevronRight,
   Loader2,
   Image as ImageIcon,
   ExternalLink,
   X,
+  Loader,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -203,7 +203,7 @@ function ThinkingBlock({
         {isLive ? (
           <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
         ) : (
-          <Bot size={13} style={{ color: "var(--text-secondary)" }} />
+          <Loader size={13} style={{ color: "var(--text-secondary)" }} />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -252,14 +252,14 @@ function TypingIndicator() {
         className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
         style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
       >
-        <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
+        <Loader size={13} className="animate-spin" />
       </div>
       <div className="flex items-center gap-1.5">
         <span className="flex gap-1">
           {[0, 1, 2].map((i) => (
             <span
               key={i}
-              className="w-1.5 h-1.5 rounded-full animate-bounce"
+              className="w-1 h-1 rounded-full animate-bounce"
               style={{
                 background: "var(--text-tertiary)",
                 animationDelay: `${i * 150}ms`,
@@ -358,10 +358,10 @@ export default function PairView({
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    const clamped = Math.min(el.scrollHeight, maxTextareaHeight);
-    el.style.height = `${clamped}px`;
-    el.style.overflowY = el.scrollHeight > maxTextareaHeight ? "auto" : "hidden";
+    el.style.height = "0px";
+    const desired = el.scrollHeight;
+    el.style.height = `${Math.min(desired, maxTextareaHeight)}px`;
+    el.style.overflowY = desired > maxTextareaHeight ? "auto" : "hidden";
   }, [input, maxTextareaHeight]);
 
   // ── Event listeners ──────────────────────────────────────────────────────
@@ -540,7 +540,11 @@ export default function PairView({
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) {
+    // On macOS Finder drags, item.type is "" during dragover — accept any file drag
+    const hasFiles = [...e.dataTransfer.items].some(
+      (i) => i.kind === "file" && (i.type === "" || i.type.startsWith("image/"))
+    );
+    if (hasFiles) {
       e.preventDefault();
       setIsDragging(true);
     }
@@ -552,7 +556,9 @@ export default function PairView({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files.length) void attachFiles(e.dataTransfer.files);
+    // Filter for images at drop time when MIME types are available
+    const imageFiles = [...e.dataTransfer.files].filter((f) => isImageFile(f));
+    if (imageFiles.length > 0) void attachFiles(imageFiles);
   };
 
   // ── Send ─────────────────────────────────────────────────────────────────
@@ -656,7 +662,7 @@ export default function PairView({
       >
         {/* Active session tab */}
         <div className="flex items-center gap-1.5 h-7 px-1 text-[12px] font-medium select-none">
-          <Bot size={12} style={{ color: "var(--text-tertiary)" }} />
+          <Loader size={12} style={{ color: "var(--text-tertiary)" }} />
           <span style={{ color: "var(--text-secondary)" }}>{agent.name}</span>
           <span style={{ color: "var(--text-tertiary)" }}>·</span>
           <span className="max-w-[200px] truncate" style={{ color: "var(--text-primary)" }}>{chatTitle}</span>
@@ -736,7 +742,7 @@ export default function PairView({
               className="flex items-center justify-center py-16 text-[13px]"
               style={{ color: "var(--text-tertiary)" }}
             >
-              <Loader2 size={14} className="animate-spin mr-2" />
+              <Loader size={14} className="animate-spin mr-2" />
               Starting session…
             </div>
           )}
@@ -796,7 +802,7 @@ export default function PairView({
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
                     style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
                   >
-                    <Bot size={13} style={{ color: "var(--text-secondary)" }} />
+                    <Loader size={13} style={{ color: "var(--text-secondary)" }} />
                   </div>
                   <div
                     className="flex-1 min-w-0 text-[14px] leading-relaxed"
@@ -894,6 +900,8 @@ export default function PairView({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => e.preventDefault()}
               placeholder={
                 sessionEnded
                   ? "Session ended"
@@ -902,12 +910,10 @@ export default function PairView({
                     : "Waiting for co-founder…"
               }
               rows={1}
-              className="flex-1 resize-none bg-transparent text-[14px] outline-none leading-relaxed px-3 pt-2.5"
+              className="w-full resize-none bg-transparent text-[14px] outline-none leading-relaxed px-3 pt-2.5"
               style={{
                 color: "var(--text-primary)",
                 minHeight: 36,
-                maxHeight: maxTextareaHeight,
-                overflowY: "hidden",
                 opacity: !canSend || sessionEnded ? 0.5 : 1,
               }}
             />

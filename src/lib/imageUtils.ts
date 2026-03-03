@@ -5,8 +5,11 @@ export interface AttachedImage {
   rawBase64?: string;
 }
 
+const IMAGE_EXTS = /\.(jpe?g|png|gif|webp|bmp|svg|ico|tiff?)$/i;
+
 export function isImageFile(file: File): boolean {
-  return file.type.startsWith("image/");
+  if (file.type.startsWith("image/")) return true;
+  return IMAGE_EXTS.test(file.name);
 }
 
 export function readFileAsThumbnail(file: File, maxDim = 200): Promise<string> {

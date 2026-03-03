@@ -60,7 +60,10 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
 
   // DnD
   const handleDragOver = (e: React.DragEvent) => {
-    if ([...e.dataTransfer.items].some((i) => i.type.startsWith("image/"))) {
+    const hasFiles = [...e.dataTransfer.items].some(
+      (i) => i.kind === "file" && (i.type === "" || i.type.startsWith("image/"))
+    );
+    if (hasFiles) {
       e.preventDefault();
       setIsDragging(true);
     }
@@ -72,7 +75,8 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files.length) void attachFiles(e.dataTransfer.files);
+    const imageFiles = [...e.dataTransfer.files].filter((f) => isImageFile(f));
+    if (imageFiles.length > 0) void attachFiles(imageFiles);
   };
 
   // Paste images
@@ -177,6 +181,8 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
           onChange={(e) => setMessageText(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => e.preventDefault()}
           placeholder="Type a message for your co-founder…"
           rows={1}
           className="w-full resize-none bg-transparent text-[14px] outline-none leading-relaxed px-3 pt-2.5"
