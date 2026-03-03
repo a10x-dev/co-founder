@@ -127,7 +127,7 @@ export default function OnboardingView({ onCreated, onImport }: OnboardingViewPr
             <Sparkles size={28} strokeWidth={1.5} style={{ color: "var(--accent)" }} />
           </div>
           <h1 className="text-[28px] font-semibold text-center mb-2" style={{ color: "var(--text-primary)" }}>
-            Welcome to Agent Founder
+            Welcome to Co-Founder
           </h1>
           <p className="text-[16px] text-center mb-8 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
             Your AI co-founder builds, ships, and iterates while you focus on the big picture.

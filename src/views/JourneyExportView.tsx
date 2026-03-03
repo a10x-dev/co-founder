@@ -144,7 +144,7 @@ function generateExportHtml(agent: Agent, sessions: WorkSessionLog[]): string {
     </div>
 
     <footer style="margin-top: 48px; font-size: 13px; color: var(--text-tertiary); font-style: italic;">
-      Built with Agent Founder
+      Built with Co-Founder
     </footer>
   </div>
 </body>
@@ -413,7 +413,7 @@ export default function JourneyExportView({
               fontStyle: "italic",
             }}
           >
-            Built with Agent Founder
+            Built with Co-Founder
           </footer>
         </div>
       </div>

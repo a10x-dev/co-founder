@@ -160,6 +160,8 @@ export default function OverviewTab({
   const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
   const [gitDiff, setGitDiff] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
+  const [showFullBlocker, setShowFullBlocker] = useState(false);
+  const [showFullUpdate, setShowFullUpdate] = useState(false);
 
   const latestSession = sessions[0];
 
@@ -168,15 +170,30 @@ export default function OverviewTab({
 
   return (
     <>
-      {latestSession?.outcome === "blocked" && (
-        <div className="rounded-xl p-4 border flex gap-3 mb-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)", borderLeftWidth: 3, borderLeftColor: "var(--status-working)" }}>
-          <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
-          <div className="min-w-0">
-            <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Co-founder is blocked</p>
-            <p className="text-[14px]" style={{ color: "var(--text-secondary)" }}>{latestSession.summary || "Review the latest session details for blocker context."}</p>
+      {latestSession?.outcome === "blocked" && (() => {
+        const text = latestSession.summary || "Review the latest session details for blocker context.";
+        const long = text.length > 200;
+        return (
+          <div className="rounded-xl p-4 flex gap-3 mb-4" style={{ background: "var(--bg-surface)", border: "1px solid var(--border-default)" }}>
+            <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
+            <div className="min-w-0">
+              <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Co-founder is blocked</p>
+              <p className={`text-[14px] ${!showFullBlocker && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>{text}</p>
+              {long && (
+                <button
+                  onClick={() => setShowFullBlocker((v) => !v)}
+                  className="text-[13px] mt-1 cursor-pointer"
+                  style={{ color: "var(--text-tertiary)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
+                >
+                  {showFullBlocker ? "Show less" : "Show more"}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {gitHasChanges && (
         <div className="rounded-lg px-4 py-2.5 mb-4 flex items-center gap-3" style={{ background: "var(--bg-inset)" }}>
@@ -223,21 +240,36 @@ export default function OverviewTab({
         </div>
       )}
 
-      {latestSession && latestSession.summary !== "Nothing to do" && (
-        <div className="mb-5">
-          <h2 className="text-[15px] font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Latest update</h2>
-          <p className="text-[14px] leading-relaxed mb-1.5" style={{ color: "var(--text-secondary)" }}>{latestSession.summary}</p>
-          <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--text-tertiary)" }}>
-            <span>{formatSessionDate(latestSession.started_at)}</span>
-            <span>·</span>
-            <span>{latestSession.turns} turns</span>
-            <span>·</span>
-            <span className="font-medium" style={{ color: OUTCOME_CONFIG[latestSession.outcome].color }}>
-              {OUTCOME_CONFIG[latestSession.outcome].label}
-            </span>
+      {latestSession && latestSession.summary !== "Nothing to do" && (() => {
+        const text = latestSession.summary || "";
+        const long = text.length > 200;
+        return (
+          <div className="mb-5">
+            <h2 className="text-[15px] font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Latest update</h2>
+            <p className={`text-[14px] leading-relaxed mb-1.5 ${!showFullUpdate && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>{text}</p>
+            {long && (
+              <button
+                onClick={() => setShowFullUpdate((v) => !v)}
+                className="text-[13px] cursor-pointer"
+                style={{ color: "var(--text-tertiary)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
+              >
+                {showFullUpdate ? "Show less" : "Show more"}
+              </button>
+            )}
+            <div className="flex items-center gap-2 text-[12px] mt-1.5" style={{ color: "var(--text-tertiary)" }}>
+              <span>{formatSessionDate(latestSession.started_at)}</span>
+              <span>·</span>
+              <span>{latestSession.turns} turns</span>
+              <span>·</span>
+              <span className="font-medium" style={{ color: OUTCOME_CONFIG[latestSession.outcome].color }}>
+                {OUTCOME_CONFIG[latestSession.outcome].label}
+              </span>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {hasActiveTasks && taskBoard && (
         <div className="mb-5">

@@ -1,4 +1,4 @@
-# Agent Founder
+# Co-Founder
 
 Desktop app that turns Claude Code into a fully autonomous AI co-founder.
 

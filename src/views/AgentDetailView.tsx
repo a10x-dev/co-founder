@@ -112,6 +112,8 @@ export default function AgentDetailView({
   const [activityVisible, setActivityVisible] = useState(false);
   const [activityFadingOut, setActivityFadingOut] = useState(false);
 
+  const [showFullMission, setShowFullMission] = useState(false);
+
   // Tabs
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
 
@@ -370,9 +372,30 @@ export default function AgentDetailView({
           </button>
         </div>
       </div>
-      <div className="flex items-center mb-4">
-        <p className="text-[15px] mt-0.5 w-full" style={{ color: "var(--text-secondary)" }}>{agent.mission}</p>
-      </div>
+      {agent.mission && (() => {
+        const long = agent.mission.length > 180;
+        return (
+          <div className="mb-4">
+            <p
+              className={`text-[15px] mt-0.5 w-full ${!showFullMission && long ? "line-clamp-2" : ""}`}
+              style={{ color: "var(--text-secondary)" }}
+            >
+              {agent.mission}
+            </p>
+            {long && (
+              <button
+                onClick={() => setShowFullMission((v) => !v)}
+                className="text-[13px] mt-1 cursor-pointer"
+                style={{ color: "var(--text-tertiary)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text-secondary)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text-tertiary)")}
+              >
+                {showFullMission ? "Show less" : "Show more"}
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
 
       {/* Stats bar */}

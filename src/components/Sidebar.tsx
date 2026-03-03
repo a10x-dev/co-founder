@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, FolderOpen, Settings, PanelLeftClose, PanelLeft, Home } from "lucide-react";
+import { Plus, FolderOpen, Settings, PanelLeftClose, PanelLeft } from "lucide-react";
 import type { Agent, AgentStatus } from "@/types";
+
+function StarburstIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" className="shrink-0">
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => (
+        <line
+          key={angle}
+          x1="12" y1="2" x2="12" y2="8"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          transform={`rotate(${angle} 12 12)`}
+        />
+      ))}
+    </svg>
+  );
+}
 
 const STORAGE_KEY = "sidebar-width";
 const MIN_WIDTH = 200;
@@ -114,7 +131,7 @@ export default function Sidebar({
             onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             title="Home"
           >
-            <Home size={16} />
+            <StarburstIcon size={16} color={selectedAgentId ? "var(--text-tertiary)" : "var(--accent)"} />
           </button>
         </div>
 
@@ -192,7 +209,7 @@ export default function Sidebar({
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.background = "none"; }}
             title="Go to Home"
           >
-            <Home size={14} />
+            <StarburstIcon size={14} color="currentColor" />
             Co-Founder
           </button>
           <button

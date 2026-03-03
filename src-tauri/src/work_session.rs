@@ -449,7 +449,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                             turns,
                             trigger: trigger.clone(),
                             outcome: SessionOutcome::Blocked,
-                            summary: truncate(&turn_result.text_output, 500),
+                            summary: truncate(&turn_result.text_output, 2000),
                             events_json: serialize_events(&all_events),
                             input_tokens: it,
                             output_tokens: ot,
@@ -508,7 +508,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
             turns,
             trigger,
             outcome: SessionOutcome::Completed,
-            summary: "Work session completed".to_string(),
+            summary: if all_text.trim().is_empty() { "Work session completed".to_string() } else { truncate(&all_text, 2000) },
             events_json: serialize_events(&all_events),
             input_tokens: it,
             output_tokens: ot,
@@ -1004,7 +1004,7 @@ fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        let end: String = s.chars().take(max).collect();
+        let end: String = s.chars().take(max - 3).collect();
         format!("{end}...")
     }
 }

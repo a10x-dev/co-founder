@@ -15,7 +15,6 @@ import {
   Image as ImageIcon,
   ExternalLink,
   X,
-  Loader,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -170,6 +169,23 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   hr: () => <hr className="my-3" style={{ borderColor: "var(--border-default)" }} />,
 };
 
+function StarburstIcon({ size = 13, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => (
+        <line
+          key={angle}
+          x1="12" y1="2" x2="12" y2="8"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          transform={`rotate(${angle} 12 12)`}
+        />
+      ))}
+    </svg>
+  );
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function ThinkingBlock({
@@ -201,9 +217,9 @@ function ThinkingBlock({
         style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
       >
         {isLive ? (
-          <Loader2 size={13} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
+          <div className="animate-spin"><StarburstIcon size={13} color="var(--text-tertiary)" /></div>
         ) : (
-          <Loader size={13} style={{ color: "var(--text-secondary)" }} />
+          <StarburstIcon size={13} color="var(--text-secondary)" />
         )}
       </div>
       <div className="flex-1 min-w-0">
@@ -252,19 +268,15 @@ function TypingIndicator() {
         className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
         style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
       >
-        <Loader size={13} className="animate-spin" />
+        <div className="animate-spin"><StarburstIcon size={13} color="var(--text-tertiary)" /></div>
       </div>
       <div className="flex items-center gap-1.5">
         <span className="flex gap-1">
           {[0, 1, 2].map((i) => (
             <span
               key={i}
-              className="w-1 h-1 rounded-full animate-bounce"
-              style={{
-                background: "var(--text-tertiary)",
-                animationDelay: `${i * 150}ms`,
-                animationDuration: "1s",
-              }}
+              className="thinking-dot"
+              style={{ animationDelay: `${i * 160}ms` }}
             />
           ))}
         </span>
@@ -338,19 +350,23 @@ export default function PairView({
     }
   }, [messages]);
 
-  // ── Auto-scroll (only when user is near bottom) ─────────────────────────
+  // ── Auto-scroll ─────────────────────────────────────────────────────────
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const isNearBottom = useCallback(() => {
+  const userScrolledUpRef = useRef(false);
+
+  const handleChatScroll = useCallback(() => {
     const el = chatContainerRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUpRef.current = distanceFromBottom > 150;
   }, []);
 
   useEffect(() => {
-    if (isNearBottom()) {
+    if (userScrolledUpRef.current) return;
+    requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages, isNearBottom]);
+    });
+  }, [messages]);
 
   // ── Auto-grow textarea ───────────────────────────────────────────────────
   const maxTextareaHeight = typeof window !== "undefined" ? Math.round(window.innerHeight * 0.35) : 300;
@@ -587,6 +603,7 @@ export default function PairView({
     }
 
     try {
+      userScrolledUpRef.current = false;
       await sendPairMessage(agent.id, sessionId, textToSend);
       setMessages((prev) => [
         ...prev,
@@ -662,7 +679,7 @@ export default function PairView({
       >
         {/* Active session tab */}
         <div className="flex items-center gap-1.5 h-7 px-1 text-[12px] font-medium select-none">
-          <Loader size={12} style={{ color: "var(--text-tertiary)" }} />
+          <StarburstIcon size={12} color="var(--text-tertiary)" />
           <span style={{ color: "var(--text-secondary)" }}>{agent.name}</span>
           <span style={{ color: "var(--text-tertiary)" }}>·</span>
           <span className="max-w-[200px] truncate" style={{ color: "var(--text-primary)" }}>{chatTitle}</span>
@@ -733,6 +750,7 @@ export default function PairView({
       {/* Message list */}
       <div
         ref={chatContainerRef}
+        onScroll={handleChatScroll}
         className="flex-1 min-h-0 overflow-y-auto"
         style={{ background: "var(--bg-surface)" }}
       >
@@ -742,7 +760,7 @@ export default function PairView({
               className="flex items-center justify-center py-16 text-[13px]"
               style={{ color: "var(--text-tertiary)" }}
             >
-              <Loader size={14} className="animate-spin mr-2" />
+              <div className="animate-spin mr-2"><StarburstIcon size={14} color="var(--text-tertiary)" /></div>
               Starting session…
             </div>
           )}
@@ -802,7 +820,7 @@ export default function PairView({
                     className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
                     style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
                   >
-                    <Loader size={13} style={{ color: "var(--text-secondary)" }} />
+                    <StarburstIcon size={13} color="var(--text-secondary)" />
                   </div>
                   <div
                     className="flex-1 min-w-0 text-[14px] leading-relaxed"

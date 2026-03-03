@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicegui/tauri_build/main/.schemas/config.schema.json",
-  "productName": "Agent Founder",
+  "productName": "Co-Founder",
   "version": "0.1.0",
   "identifier": "com.agentfounder.app",
   "build": {

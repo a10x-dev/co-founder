@@ -69,8 +69,8 @@ export default function SettingsTab({
     let confirmed = false;
     try {
       const { ask: tauriAsk } = await import("@tauri-apps/plugin-dialog");
-      confirmed = await tauriAsk("Delete this co-founder from Agent Founder? This cannot be undone.", { title: "Delete Co-Founder", kind: "warning" });
-    } catch { confirmed = window.confirm("Delete this co-founder from Agent Founder? This cannot be undone."); }
+      confirmed = await tauriAsk("Delete this co-founder? This cannot be undone.", { title: "Delete Co-Founder", kind: "warning" });
+    } catch { confirmed = window.confirm("Delete this co-founder? This cannot be undone."); }
     if (!confirmed) return;
     setDeleting(true);
     try {

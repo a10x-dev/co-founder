@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for Agent Founder",
+  "description": "Default capabilities for Co-Founder",
   "windows": ["main"],
   "permissions": [
     "core:default",

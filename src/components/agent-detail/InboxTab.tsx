@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Send, Loader2, Image as ImageIcon, X } from "lucide-react";
+import { Send, Loader2, Image as ImageIcon, X, Trash2 } from "lucide-react";
 import type { Agent } from "@/types";
-import { sendMessageToAgent, readTextFile, saveInboxImages } from "@/lib/api";
+import { sendMessageToAgent, readTextFile, writeTextFile, saveInboxImages } from "@/lib/api";
 import { type AttachedImage, isImageFile, readFileAsThumbnail, readFileAsBase64 } from "@/lib/imageUtils";
 
 export interface InboxTabProps {
@@ -245,7 +245,22 @@ export default function InboxTab({ agent, inboxContent, setInboxContent }: Inbox
       {/* Pending messages */}
       {inboxContent && inboxContent.includes("---") && (
         <div className="rounded-xl border p-4" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
-          <h3 className="text-[15px] font-medium mb-2" style={{ color: "var(--text-primary)" }}>Pending messages</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Pending messages</h3>
+            <button
+              onClick={async () => {
+                const defaultInbox = "# Inbox\n\nMessages from your human partner. Process these on each check-in and remove handled items.\nWhen your partner sends a message, it lands here. Address it before anything else.\n\n---\n(No pending messages)\n";
+                await writeTextFile(agent.id, `${agent.workspace}/.founder/INBOX.md`, defaultInbox);
+                setInboxContent(defaultInbox);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium cursor-pointer transition-colors"
+              style={{ color: "var(--text-tertiary)" }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--status-error)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.background = "transparent"; }}
+            >
+              <Trash2 size={12} /> Clear
+            </button>
+          </div>
           <pre className="text-[13px] font-mono whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>{inboxContent}</pre>
         </div>
       )}

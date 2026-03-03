@@ -68,7 +68,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .setup(|app| {
-            let open_item = MenuItem::with_id(app, "open", "Open Agent Founder", true, None::<&str>)?;
+            let open_item = MenuItem::with_id(app, "open", "Open Co-Founder", true, None::<&str>)?;
             let pause_item = MenuItem::with_id(app, "pause_all", "Pause All Agents", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 

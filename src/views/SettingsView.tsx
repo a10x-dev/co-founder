@@ -132,7 +132,7 @@ export default function SettingsView() {
         Settings
       </h1>
       <p className="text-[15px] mb-8" style={{ color: "var(--text-secondary)" }}>
-        Configure how Agent Founder works on your machine.
+        Configure how Co-Founder works on your machine.
       </p>
 
       <div className="rounded-xl border p-6 space-y-6" style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}>
