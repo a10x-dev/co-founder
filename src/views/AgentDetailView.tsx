@@ -105,10 +105,12 @@ export default function AgentDetailView({
 
   // Live output
   const [liveOutput, setLiveOutput] = useState<Array<{ type: string; message: string; timestamp: number }>>([]);
-  const [showLive, setShowLive] = useState(true);
+  const [showLive, setShowLive] = useState(false);
   const liveEndRef = useRef<HTMLDivElement>(null);
   const liveContainerRef = useRef<HTMLDivElement>(null);
   const [sessionProgress, setSessionProgress] = useState<{ turn: number; maxTurns: number; elapsedSecs: number; maxDurationSecs: number } | null>(null);
+  const [activityVisible, setActivityVisible] = useState(false);
+  const [activityFadingOut, setActivityFadingOut] = useState(false);
 
   // Tabs
   const [activeTab, setActiveTab] = useState<TabKey>("overview");
@@ -215,8 +217,24 @@ export default function AgentDetailView({
           return;
         }
 
-        // Skip assistant events — they're response text, not actionable status
-        if (p.type === "assistant") return;
+        if (p.type === "assistant") {
+          try {
+            const raw = JSON.parse(p.raw || "{}");
+            const content = raw.content ?? raw.message?.content;
+            let text = "";
+            if (typeof content === "string") text = content;
+            else if (Array.isArray(content)) {
+              const thinking = content.find((b: Record<string, unknown>) => b.type === "thinking");
+              const textBlock = content.find((b: Record<string, unknown>) => b.type === "text");
+              if (thinking) text = `Thinking: ${(thinking.thinking as string || "").slice(0, 100)}`;
+              else if (textBlock) text = ((textBlock.text as string) || "").slice(0, 100);
+            }
+            if (text) {
+              setLiveOutput((prev) => [...prev, { type: "assistant", message: text.split("\n")[0].slice(0, 100), timestamp: Date.now() }].slice(-50));
+            }
+          } catch {}
+          return;
+        }
 
         let message = "";
         if (p.type === "session_start") {
@@ -253,10 +271,20 @@ export default function AgentDetailView({
             }
           } catch { message = "Working..."; }
         } else if (p.type === "result") {
-          message = "Done";
           setSessionStartTime(null);
+          setActivityFadingOut(true);
+          setTimeout(() => {
+            setLiveOutput([]);
+            setSessionProgress(null);
+            setActivityVisible(false);
+            setActivityFadingOut(false);
+            setShowLive(false);
+          }, 600);
+          return;
         } else { return; }
 
+        setActivityVisible(true);
+        setActivityFadingOut(false);
         setLiveOutput((prev) => [...prev, { type: p.type, message, timestamp: Date.now() }].slice(-50));
       },
     ).then((fn) => { if (active) unlisten = fn; }).catch(() => {});
@@ -271,17 +299,16 @@ export default function AgentDetailView({
     });
   }, [liveOutput]);
 
-  // Auto-clear feed 3s after "Done"
+  // Reset activity state when agent stops
   useEffect(() => {
-    if (liveOutput.length === 0) return;
-    const latest = liveOutput[liveOutput.length - 1];
-    if (latest.type !== "result") return;
-    const timer = setTimeout(() => {
+    if (agent.status !== "running") {
+      setActivityFadingOut(false);
+      setActivityVisible(false);
       setLiveOutput([]);
       setSessionProgress(null);
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [liveOutput]);
+      setShowLive(false);
+    }
+  }, [agent.status]);
 
   const config = STATUS_CONFIG[agent.status];
   const nextCheckIn = formatNextCheckIn(agent.last_heartbeat_at, agent.checkin_interval_secs);
@@ -407,59 +434,95 @@ export default function AgentDetailView({
         </div>
       )}
 
-      {/* Activity feed */}
-      {agent.status === "running" && liveOutput.length > 0 && (() => {
+      {/* Activity indicator */}
+      {agent.status === "running" && activityVisible && (() => {
         const latest = liveOutput[liveOutput.length - 1];
-        const isDone = latest.type === "result";
         const elapsedLabel = elapsed < 60 ? `${elapsed}s` : `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`;
 
         return (
-          <div style={{ marginTop: 20 }}>
+          <div
+            className="rounded-xl border mt-5 overflow-hidden"
+            style={{
+              background: "var(--bg-surface)",
+              borderColor: "var(--border-default)",
+              opacity: activityFadingOut ? 0 : 1,
+              transform: activityFadingOut ? "translateY(-4px)" : "translateY(0)",
+              transition: "opacity 500ms ease-out, transform 500ms ease-out",
+            }}
+          >
+            {/* Main indicator bar */}
             <div
-              className="flex items-center gap-2.5 cursor-pointer select-none"
+              className="flex items-center gap-3 px-4 cursor-pointer select-none"
               onClick={() => setShowLive((v) => !v)}
-              style={{ minHeight: 28 }}
+              style={{ height: 44 }}
             >
+              {/* Thinking dots animation */}
+              <div className="flex items-center gap-[3px] shrink-0">
+                <span className="thinking-dot" style={{ animationDelay: "0ms" }} />
+                <span className="thinking-dot" style={{ animationDelay: "160ms" }} />
+                <span className="thinking-dot" style={{ animationDelay: "320ms" }} />
+              </div>
+
               <span
-                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${isDone ? "" : "animate-pulse"}`}
-                style={{ background: isDone ? "var(--text-tertiary)" : "var(--status-active)" }}
-              />
-              <span
-                className="text-[13px] truncate flex-1 min-w-0"
-                style={{ color: isDone ? "var(--text-tertiary)" : "var(--text-secondary)" }}
+                className="text-[13px] flex-1 min-w-0 truncate"
+                style={{ color: "var(--text-secondary)" }}
               >
-                {latest.message}
+                {latest?.message || "Thinking..."}
               </span>
-              {!isDone && sessionStartTime && (
-                <span className="text-[12px] font-mono shrink-0" style={{ color: "var(--text-tertiary)" }}>
+
+              {sessionStartTime && (
+                <span className="text-[12px] font-mono shrink-0 tabular-nums" style={{ color: "var(--text-tertiary)" }}>
                   {elapsedLabel}
                 </span>
               )}
-              {sessionProgress && !isDone && (
+
+              {sessionProgress && (
                 <span className="text-[11px] font-mono shrink-0 flex items-center gap-1.5" style={{ color: "var(--text-tertiary)" }}>
-                  <span>turn {sessionProgress.turn}/{sessionProgress.maxTurns}</span>
+                  <span className="tabular-nums">turn {sessionProgress.turn}/{sessionProgress.maxTurns}</span>
                   <div className="w-12 h-1 rounded-full overflow-hidden" style={{ background: "var(--bg-inset)" }}>
                     <div className="h-full rounded-full transition-all duration-500" style={{ background: "var(--status-active)", width: `${Math.min(100, (sessionProgress.turn / sessionProgress.maxTurns) * 100)}%` }} />
                   </div>
                 </span>
               )}
+
+              <svg
+                width="12" height="12" viewBox="0 0 12 12" fill="none"
+                className="shrink-0 transition-transform duration-200"
+                style={{ color: "var(--text-tertiary)", transform: showLive ? "rotate(180deg)" : "rotate(0deg)" }}
+              >
+                <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </div>
-            {showLive && liveOutput.length > 1 && (
-              <div ref={liveContainerRef} className="mt-1.5 overflow-hidden" style={{ maxHeight: 160, overflowY: "auto" }}>
-                <div className="pl-4 space-y-px">
-                  {liveOutput.slice(0, -1).map((entry, i) => (
-                    <div
-                      key={i}
-                      className="text-[12px] truncate"
-                      style={{ color: "var(--text-tertiary)", lineHeight: "22px" }}
-                    >
-                      {entry.message}
-                    </div>
-                  ))}
-                  <div ref={liveEndRef} />
+
+            {/* Expandable detail log */}
+            <div
+              style={{
+                maxHeight: showLive ? 200 : 0,
+                opacity: showLive ? 1 : 0,
+                transition: "max-height 300ms ease-out, opacity 200ms ease-out",
+                overflow: "hidden",
+              }}
+            >
+              <div style={{ borderTop: "1px solid var(--border-default)" }}>
+                <div ref={liveContainerRef} style={{ maxHeight: 200, overflowY: "auto" }}>
+                  <div className="px-4 py-2 space-y-px">
+                    {liveOutput.map((entry, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2.5 text-[12px]"
+                        style={{ lineHeight: "24px" }}
+                      >
+                        <span className="w-1 h-1 rounded-full shrink-0" style={{ background: i === liveOutput.length - 1 ? "var(--status-active)" : "var(--text-tertiary)", opacity: i === liveOutput.length - 1 ? 1 : 0.5 }} />
+                        <span className="truncate" style={{ color: i === liveOutput.length - 1 ? "var(--text-secondary)" : "var(--text-tertiary)" }}>
+                          {entry.message}
+                        </span>
+                      </div>
+                    ))}
+                    <div ref={liveEndRef} />
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         );
       })()}
