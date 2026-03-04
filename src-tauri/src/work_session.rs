@@ -965,9 +965,19 @@ fn parse_next_checkin(text: &str) -> Option<u64> {
 fn parse_token_usage(events: &[crate::cli_adapter::StreamEvent]) -> (u64, u64, f64) {
     let mut input_tokens: u64 = 0;
     let mut output_tokens: u64 = 0;
+    let mut explicit_cost: Option<f64> = None;
+    let mut model: Option<String> = None;
+
     for event in events {
-        if event.event_type == "result" || event.event_type == "usage" {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&event.raw_json) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&event.raw_json) {
+            // Extract model from any event that contains it (system, result, etc.)
+            if model.is_none() {
+                if let Some(m) = parsed.get("model").and_then(|v| v.as_str()) {
+                    model = Some(m.to_lowercase());
+                }
+            }
+
+            if event.event_type == "result" || event.event_type == "usage" {
                 let usage = parsed.get("usage").unwrap_or(&parsed);
                 if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
                     input_tokens += input;
@@ -975,11 +985,27 @@ fn parse_token_usage(events: &[crate::cli_adapter::StreamEvent]) -> (u64, u64, f
                 if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                     output_tokens += output;
                 }
+                // Use explicit cost from CLI if provided
+                if let Some(c) = parsed.get("cost_usd").and_then(|v| v.as_f64()) {
+                    explicit_cost = Some(explicit_cost.unwrap_or(0.0) + c);
+                }
             }
         }
     }
-    let cost =
-        (input_tokens as f64 * 3.0 / 1_000_000.0) + (output_tokens as f64 * 15.0 / 1_000_000.0);
+
+    let cost = if let Some(c) = explicit_cost {
+        c
+    } else {
+        // Price per million tokens based on model
+        let (input_price, output_price) = match model.as_deref() {
+            Some(m) if m.contains("opus") => (15.0, 75.0),
+            Some(m) if m.contains("haiku") => (0.80, 4.0),
+            _ => (3.0, 15.0), // Default to Sonnet pricing
+        };
+        (input_tokens as f64 * input_price / 1_000_000.0)
+            + (output_tokens as f64 * output_price / 1_000_000.0)
+    };
+
     (
         input_tokens,
         output_tokens,
