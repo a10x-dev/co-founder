@@ -5,6 +5,8 @@ import {
   GitBranch,
   ArrowRight,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Agent, WorkSessionLog, GitStatus, TaskBoard } from "@/types";
 import {
   gitGetDiff,
@@ -13,6 +15,30 @@ import {
   getTaskBoard,
   moveTask,
 } from "@/lib/api";
+
+const summaryMdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
+  p: ({ children }) => <p className="mb-1.5 last:mb-0 leading-relaxed">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold" style={{ color: "var(--text-primary)" }}>{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  h1: ({ children }) => <h3 className="text-[14px] font-semibold mt-2 mb-1" style={{ color: "var(--text-primary)" }}>{children}</h3>,
+  h2: ({ children }) => <h3 className="text-[14px] font-semibold mt-2 mb-1" style={{ color: "var(--text-primary)" }}>{children}</h3>,
+  h3: ({ children }) => <h4 className="text-[13px] font-semibold mt-1.5 mb-0.5" style={{ color: "var(--text-primary)" }}>{children}</h4>,
+  ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  code: ({ children, className }) => {
+    if (className?.includes("language-")) {
+      return (
+        <pre className="rounded-lg px-3 py-2 my-1.5 overflow-x-auto text-[12px] leading-5" style={{ background: "var(--bg-inset)", color: "var(--text-primary)", fontFamily: "'Geist Mono', monospace" }}>
+          <code>{children}</code>
+        </pre>
+      );
+    }
+    return <code className="px-1 py-0.5 rounded text-[12px]" style={{ background: "var(--bg-inset)", color: "var(--text-primary)", fontFamily: "'Geist Mono', monospace" }}>{children}</code>;
+  },
+  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "var(--text-primary)" }}>{children}</a>,
+  hr: () => <hr className="my-2" style={{ borderColor: "var(--border-default)" }} />,
+};
 
 const OUTCOME_CONFIG: Record<
   WorkSessionLog["outcome"],
@@ -178,7 +204,9 @@ export default function OverviewTab({
             <AlertTriangle size={20} className="shrink-0 mt-0.5" style={{ color: "var(--status-working)" }} />
             <div className="min-w-0">
               <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>Co-founder is blocked</p>
-              <p className={`text-[14px] ${!showFullBlocker && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>{text}</p>
+              <div className={`text-[14px] ${!showFullBlocker && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={summaryMdComponents}>{text}</ReactMarkdown>
+              </div>
               {long && (
                 <button
                   onClick={() => setShowFullBlocker((v) => !v)}
@@ -246,7 +274,9 @@ export default function OverviewTab({
         return (
           <div className="mb-5">
             <h2 className="text-[15px] font-semibold mb-2" style={{ color: "var(--text-primary)" }}>Latest update</h2>
-            <p className={`text-[14px] leading-relaxed mb-1.5 ${!showFullUpdate && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>{text}</p>
+            <div className={`text-[14px] leading-relaxed mb-1.5 ${!showFullUpdate && long ? "line-clamp-3" : ""}`} style={{ color: "var(--text-secondary)" }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={summaryMdComponents}>{text}</ReactMarkdown>
+            </div>
             {long && (
               <button
                 onClick={() => setShowFullUpdate((v) => !v)}
@@ -345,8 +375,10 @@ export default function OverviewTab({
                     </div>
                   </div>
                   {isExpanded && (
-                    <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--border-default)" }}>
-                      <p className="text-[14px] mb-2" style={{ color: "var(--text-secondary)" }}>{session.summary || "No summary"}</p>
+                    <div className="mt-3 pt-3" onClick={(e) => e.stopPropagation()} style={{ borderTop: "1px solid var(--border-default)" }}>
+                      <div className="text-[14px] mb-2" style={{ color: "var(--text-secondary)" }}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={summaryMdComponents}>{session.summary || "No summary"}</ReactMarkdown>
+                      </div>
                       <div className="flex items-center gap-4 text-[13px] mb-2" style={{ color: "var(--text-tertiary)" }}>
                         <span>{session.turns} turns</span>
                         {(session.input_tokens > 0 || session.output_tokens > 0) && (

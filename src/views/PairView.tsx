@@ -817,8 +817,8 @@ export default function PairView({
               return (
                 <div key={m.id} className="flex items-start gap-2.5">
                   <div
-                    className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5"
-                    style={{ background: "var(--bg-inset)", border: "1px solid var(--border-default)" }}
+                    className="shrink-0 w-6 h-6 flex items-center justify-center mt-0.5 rounded"
+                    style={{ background: "white", border: "1px solid var(--border-default)" }}
                   >
                     <StarburstIcon size={13} color="var(--text-secondary)" />
                   </div>
