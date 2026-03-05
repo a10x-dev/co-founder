@@ -40,6 +40,7 @@ export default function App() {
   } | null>(null);
   const [pairSession, setPairSession] = useState<PairSessionState | null>(null);
   const [pairInitialMessages, setPairInitialMessages] = useState<Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | undefined>(undefined);
+  const [readOnlyMessages, setReadOnlyMessages] = useState<Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | null>(null);
   const [cliReady, setCliReady] = useState<boolean | null>(null); // null = checking
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
@@ -62,39 +63,31 @@ export default function App() {
   const pairSessionRef = useRef(pairSession);
   pairSessionRef.current = pairSession;
 
-  const cleanupPairIfActive = useCallback(async () => {
-    const prev = pairSessionRef.current;
-    if (!prev) return;
-    setPairSession(null);
-    try {
-      await endPairSessionApi(prev.agentId, prev.sessionId, true);
-    } catch {
-      // best-effort
-    }
-  }, []);
-
   const handleSelectAgent = (id: string) => {
-    void cleanupPairIfActive();
     setSelectedAgentId(id);
     setView("home");
   };
 
   const handleHome = () => {
-    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("home");
   };
 
   const handleNewAgent = () => {
-    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("create");
   };
 
   const handleSettings = () => {
-    void cleanupPairIfActive();
     setSelectedAgentId(null);
     setView("settings");
+  };
+
+  const handleReturnToPair = () => {
+    if (pairSession) {
+      setSelectedAgentId(pairSession.agentId);
+      setView("pair");
+    }
   };
 
   const handleStartPair = async (agent: Agent) => {
@@ -156,28 +149,20 @@ export default function App() {
     await handleStartPair(agent);
   };
 
-  const handleResumePair = async (pastSessionId: string) => {
+  const handleViewPastSession = async (pastSessionId: string) => {
     if (!pairAgent) return;
-    const agent = pairAgent;
     try {
-      const msgs = await getPairSessionMessages(agent.id, pastSessionId);
+      const msgs = await getPairSessionMessages(pairAgent.id, pastSessionId);
       const chatMsgs = msgs.map((m: { role: string; content: string; created_at: string }, i: number) => ({
         id: `history-${i}-${Date.now()}`,
         role: m.role as "user" | "agent",
         text: m.content,
         timestamp: new Date(m.created_at).getTime(),
       }));
-      await cleanupPair(false);
-      setPairInitialMessages(chatMsgs);
-      const started = await startPairSession(agent.id, "");
-      setPairSession({
-        agentId: agent.id,
-        sessionId: started.session_id,
-      });
-      refetch();
+      setReadOnlyMessages(chatMsgs);
     } catch (err) {
-      console.error("Failed to resume pair session:", err);
-      notify("Resume failed", "Could not resume the pair session.");
+      console.error("Failed to load past session:", err);
+      notify("Load failed", "Could not load the past session.");
     }
   };
 
@@ -356,6 +341,42 @@ export default function App() {
         className="flex-1 min-w-0 overflow-y-auto"
         style={{ background: "var(--bg-app)" }}
       >
+        {/* PairView stays mounted while session is active — hidden when not in pair view */}
+        {pairSession && pairAgent && (
+          <div className={view === "pair" ? "h-full" : "hidden"}>
+            <PairView
+              agent={pairAgent}
+              sessionId={pairSession.sessionId}
+              onManualEnd={handleEndPair}
+              onNewSession={() => void handleNewPair()}
+              onSessionEnded={stableRefetch}
+              onViewPastSession={(pastSessionId) => void handleViewPastSession(pastSessionId)}
+              readOnlyMessages={readOnlyMessages}
+              onCloseReadOnly={() => setReadOnlyMessages(null)}
+              initialMessages={pairInitialMessages}
+            />
+          </div>
+        )}
+
+        {/* Return to session pill — shown when pair is active but user navigated away */}
+        {pairSession && pairAgent && view !== "pair" && (
+          <button
+            onClick={handleReturnToPair}
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-full text-[13px] font-medium cursor-pointer shadow-lg"
+            style={{
+              background: "var(--accent)",
+              color: "white",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+            }}
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "rgba(255,255,255,0.6)" }} />
+              <span className="relative inline-flex rounded-full h-2 w-2" style={{ background: "white" }} />
+            </span>
+            Return to pair session
+          </button>
+        )}
+
         {loading ? (
           <div
             className="flex items-center justify-center h-full text-[14px]"
@@ -373,16 +394,8 @@ export default function App() {
             onImported={handleAgentImported}
             onCancel={() => setView("home")}
           />
-        ) : view === "pair" && pairSession && pairAgent ? (
-          <PairView
-            agent={pairAgent}
-            sessionId={pairSession.sessionId}
-            onManualEnd={handleEndPair}
-            onNewSession={() => void handleNewPair()}
-            onSessionEnded={stableRefetch}
-            onResumeSession={(pastSessionId) => void handleResumePair(pastSessionId)}
-            initialMessages={pairInitialMessages}
-          />
+        ) : view === "pair" ? (
+          null /* PairView rendered above, always mounted */
         ) : view === "journey" && journeyData ? (
           <JourneyExportView
             agent={journeyData.agent}

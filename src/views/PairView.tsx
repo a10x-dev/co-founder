@@ -37,7 +37,9 @@ interface PairViewProps {
   onManualEnd: () => Promise<void> | void;
   onNewSession: () => void;
   onSessionEnded: () => void;
-  onResumeSession?: (pastSessionId: string) => void;
+  onViewPastSession?: (pastSessionId: string) => void;
+  readOnlyMessages?: Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | null;
+  onCloseReadOnly?: () => void;
   initialMessages?: ChatMessage[];
 }
 
@@ -373,7 +375,9 @@ export default function PairView({
   onManualEnd,
   onNewSession,
   onSessionEnded,
-  onResumeSession,
+  onViewPastSession,
+  readOnlyMessages,
+  onCloseReadOnly,
   initialMessages,
 }: PairViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -651,9 +655,9 @@ export default function PairView({
     return () => document.removeEventListener("mousedown", handler);
   }, [historyOpen]);
 
-  const handleResumeSession = (pastSession: WorkSessionLog) => {
+  const handleViewSession = (pastSession: WorkSessionLog) => {
     setHistoryOpen(false);
-    onResumeSession?.(pastSession.session_id);
+    onViewPastSession?.(pastSession.session_id);
   };
 
   // ── Image attachment ─────────────────────────────────────────────────────
@@ -875,7 +879,7 @@ export default function PairView({
                   <SessionHistoryList
                     sessions={pairSessions}
                     searchQuery={historySearch}
-                    onResume={handleResumeSession}
+                    onResume={handleViewSession}
                   />
                 )}
               </div>
@@ -929,11 +933,76 @@ export default function PairView({
         </button>
       </div>
 
-      {/* Message list */}
+      {/* Read-only past session overlay */}
+      {readOnlyMessages && (
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ background: "var(--bg-surface)" }}>
+          {/* Banner */}
+          <div
+            className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 text-[12px] font-medium"
+            style={{
+              background: "color-mix(in srgb, var(--accent) 8%, var(--bg-surface))",
+              borderBottom: "1px solid var(--border-default)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <span>Viewing past session ({readOnlyMessages.length} messages)</span>
+            <button
+              onClick={onCloseReadOnly}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md cursor-pointer text-[12px] font-medium"
+              style={{ color: "var(--text-secondary)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              <X size={12} />
+              Back to live session
+            </button>
+          </div>
+
+          <div className="max-w-2xl mx-auto px-6 py-4 space-y-4">
+            {readOnlyMessages.map((m) => (
+              m.role === "user" ? (
+                <div key={m.id} className="flex flex-col items-end gap-1.5">
+                  {m.text && (
+                    <div
+                      className="px-3.5 py-2.5 rounded-2xl rounded-br-sm text-[14px] leading-relaxed max-w-[80%]"
+                      style={{
+                        background: "var(--bg-inset)",
+                        color: "var(--text-primary)",
+                        border: "1px solid var(--border-default)",
+                      }}
+                    >
+                      {m.text}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div key={m.id} className="flex items-start gap-2.5">
+                  <div
+                    className="shrink-0 w-6 h-6 flex items-center justify-center mt-0.5 rounded"
+                    style={{ background: "white", border: "1px solid var(--border-default)" }}
+                  >
+                    <StarburstIcon size={13} color="var(--text-secondary)" />
+                  </div>
+                  <div
+                    className="flex-1 min-w-0 text-[14px] leading-relaxed"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                      {m.text}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              )
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Message list — hidden when viewing read-only */}
       <div
         ref={chatContainerRef}
         onScroll={handleChatScroll}
-        className="flex-1 min-h-0 overflow-y-auto"
+        className={`flex-1 min-h-0 overflow-y-auto ${readOnlyMessages ? "hidden" : ""}`}
         style={{ background: "var(--bg-surface)" }}
       >
         <div className="max-w-2xl mx-auto px-6 py-4 space-y-4">
@@ -1046,9 +1115,9 @@ export default function PairView({
         </div>
       </div>
 
-      {/* Input area */}
+      {/* Input area — hidden when viewing read-only */}
       <div
-        className="shrink-0 border-t"
+        className={`shrink-0 border-t ${readOnlyMessages ? "hidden" : ""}`}
         style={{
           background: "var(--bg-surface)",
           borderColor: "var(--border-default)",
