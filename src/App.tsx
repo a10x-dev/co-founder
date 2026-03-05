@@ -12,6 +12,8 @@ import PairView from "@/views/PairView";
 import SetupView from "@/views/SetupView";
 import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useUpdater } from "@/hooks/useUpdater";
+import { UpdateNotification } from "@/components/UpdateNotification";
 import {
   getGlobalSettings,
   getWorkSessionsExport,
@@ -42,6 +44,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
   const { notify } = useNotifications();
+  const { status: updateStatus, updateInfo, downloadProgress, downloadAndInstall, dismiss: dismissUpdate } = useUpdater();
 
   const toggleSidebar = useCallback(() => setSidebarOpen((p) => !p), []);
 
@@ -415,6 +418,13 @@ export default function App() {
           />
         )}
       </main>
+      <UpdateNotification
+        status={updateStatus}
+        updateInfo={updateInfo}
+        downloadProgress={downloadProgress}
+        onDownload={downloadAndInstall}
+        onDismiss={dismissUpdate}
+      />
     </div>
   );
 }

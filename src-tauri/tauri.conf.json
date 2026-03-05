@@ -41,5 +41,12 @@
       "entitlements": null
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMUM1M0UwRkE5QzU5QkQKUldTOVdaejY0Rk1jc3M1bENzWkQvOGwyK2N2ZldZbnJNTG1TUC9WUDRDZlhaVm9EME9xRkxybHcK",
+      "endpoints": [
+        "https://agentfounder.ai/api/releases/{{target}}/{{arch}}/{{current_version}}"
+      ]
+    }
+  }
 }
