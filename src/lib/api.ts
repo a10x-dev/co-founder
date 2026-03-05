@@ -239,3 +239,11 @@ export async function deleteScheduleEntry(agentId: string, entryId: string): Pro
 export async function toggleScheduleEntry(agentId: string, entryId: string, enabled: boolean): Promise<void> {
   return invoke("toggle_schedule_entry", { agentId, entryId, enabled });
 }
+
+export async function installClaudeCli(): Promise<string> {
+  return invoke("install_claude_cli");
+}
+
+export async function checkClaudeCliStatus(): Promise<{installed: boolean; path: string | null; version: string | null}> {
+  return invoke("check_claude_cli_status");
+}

@@ -221,6 +221,8 @@ pub fn run() {
             commands::read_text_file,
             commands::inspect_project_folder,
             commands::detect_claude_cli,
+            commands::install_claude_cli,
+            commands::check_claude_cli_status,
             commands::get_agent_env_vars,
             commands::set_agent_env_var,
             commands::delete_agent_env_var,

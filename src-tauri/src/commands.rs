@@ -293,6 +293,71 @@ pub async fn detect_claude_cli() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+pub async fn install_claude_cli() -> Result<String, String> {
+    use tokio::process::Command;
+
+    // Download the installer script to a temp file first
+    let tmp_dir = std::env::temp_dir();
+    let script_path = tmp_dir.join("claude-install.sh");
+
+    let download = Command::new("curl")
+        .args(["-fsSL", "-o", script_path.to_str().unwrap(), "https://claude.ai/install.sh"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to download installer: {e}"))?;
+
+    if !download.status.success() {
+        let stderr = String::from_utf8_lossy(&download.stderr);
+        return Err(format!("Failed to download installer: {stderr}"));
+    }
+
+    // Execute the downloaded script
+    let output = Command::new("/bin/bash")
+        .arg(script_path.to_str().unwrap())
+        .output()
+        .await
+        .map_err(|e| format!("Failed to run installer: {e}"))?;
+
+    // Clean up the temp script
+    let _ = tokio::fs::remove_file(&script_path).await;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        Err(format!("Install failed: {stdout}\n{stderr}"))
+    }
+}
+
+#[tauri::command]
+pub async fn check_claude_cli_status() -> Result<serde_json::Value, String> {
+    let claude_path = crate::cli_adapter::detect_claude_path()
+        .unwrap_or_else(|| "claude".to_string());
+
+    let version_output = std::process::Command::new(&claude_path)
+        .arg("--version")
+        .output();
+
+    match version_output {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            Ok(serde_json::json!({
+                "installed": true,
+                "path": claude_path,
+                "version": version,
+            }))
+        }
+        _ => Ok(serde_json::json!({
+            "installed": false,
+            "path": null,
+            "version": null,
+        }))
+    }
+}
+
+#[tauri::command]
 pub async fn get_agent_env_vars(
     agent_id: String,
     state: tauri::State<'_, AppState>,

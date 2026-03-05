@@ -9,15 +9,16 @@ import JourneyExportView from "@/views/JourneyExportView";
 import OnboardingView from "@/views/OnboardingView";
 import SettingsView from "@/views/SettingsView";
 import PairView from "@/views/PairView";
+import SetupView from "@/views/SetupView";
 import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
 import {
-  detectClaudeCli,
   getGlobalSettings,
   getWorkSessionsExport,
   startPairSession,
   endPairSession as endPairSessionApi,
   getPairSessionMessages,
+  checkClaudeCliStatus,
 } from "@/lib/api";
 import type { Agent, PairSessionEndedEvent, WorkSessionLog } from "@/types";
 
@@ -37,7 +38,7 @@ export default function App() {
   } | null>(null);
   const [pairSession, setPairSession] = useState<PairSessionState | null>(null);
   const [pairInitialMessages, setPairInitialMessages] = useState<Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | undefined>(undefined);
-  const [cliWarning, setCliWarning] = useState<string | null>(null);
+  const [cliReady, setCliReady] = useState<boolean | null>(null); // null = checking
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
   const { notify } = useNotifications();
@@ -206,22 +207,23 @@ export default function App() {
     let unlistenSessionError: (() => void) | null = null;
     let active = true;
 
-    getGlobalSettings()
-      .then((settings) => {
+    checkClaudeCliStatus()
+      .then((status) => {
         if (!active) return;
-        if (settings.claude_cli_path) return;
-        return detectClaudeCli();
-      })
-      .then((path) => {
-        if (!active) return;
-        if (path === undefined) return;
-        if (!path) {
-          setCliWarning(
-            "Claude Code not found. Install it to start using your co-founders.",
-          );
+        if (status.installed) {
+          setCliReady(true);
+        } else {
+          // detect_claude_path already checked common locations;
+          // only extra value is a user-configured path in settings
+          return getGlobalSettings().then((settings) => {
+            if (!active) return;
+            setCliReady(!!settings.claude_cli_path);
+          });
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (active) setCliReady(false);
+      });
 
     listen<WorkSessionLog>("session-completed", (event) => {
       refetch();
@@ -241,16 +243,12 @@ export default function App() {
       // Running outside Tauri (web dev) — no event bus available.
     });
 
-    listen<{ message?: string }>("cli-missing", (event) => {
-      const message =
-        event.payload?.message ??
-        "Claude Code not found. Install it to start using your co-founders.";
-      setCliWarning(message);
+    listen<{ message?: string }>("cli-missing", () => {
+      // If CLI goes missing at runtime, flip back to setup
+      setCliReady(false);
     }).then((fn) => {
       if (active) unlistenCliMissing = fn;
-    }).catch(() => {
-      // Running outside Tauri (web dev) — no event bus available.
-    });
+    }).catch(() => {});
 
     listen<{ agent_id?: string; error?: string }>(
       "session-runtime-error",
@@ -320,6 +318,23 @@ export default function App() {
     };
   }, [pairSession, notify, refetch]);
 
+  // Gate on CLI setup
+  if (cliReady === null) {
+    return (
+      <div className="flex items-center justify-center h-screen" style={{ background: "var(--bg-app)" }}>
+        <div className="text-[14px]" style={{ color: "var(--text-tertiary)" }}>Loading…</div>
+      </div>
+    );
+  }
+
+  if (cliReady === false) {
+    return (
+      <div className="h-screen" style={{ background: "var(--bg-app)" }}>
+        <SetupView onComplete={() => setCliReady(true)} />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
@@ -338,21 +353,6 @@ export default function App() {
         className="flex-1 min-w-0 overflow-y-auto"
         style={{ background: "var(--bg-app)" }}
       >
-        {cliWarning && (
-          <div className="mx-8 mt-6 rounded-lg border px-4 py-3 flex items-start justify-between gap-4" style={{ borderColor: "var(--status-working)", background: "var(--bg-surface)" }}>
-            <p className="text-[14px]" style={{ color: "var(--text-primary)" }}>
-              {cliWarning}
-            </p>
-            <button
-              onClick={() => setCliWarning(null)}
-              className="text-[13px] font-medium shrink-0 cursor-pointer"
-              style={{ color: "var(--text-secondary)" }}
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-
         {loading ? (
           <div
             className="flex items-center justify-center h-full text-[14px]"
