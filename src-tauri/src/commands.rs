@@ -628,6 +628,26 @@ pub async fn end_pair_session(
 }
 
 #[tauri::command]
+pub async fn get_pair_session_messages(
+    agent_id: String,
+    session_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let id = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid agent ID: {e}"))?;
+    let messages = state.db.get_pair_messages_by_session(&id, &session_id)?;
+    Ok(messages
+        .into_iter()
+        .map(|(role, content, created_at)| {
+            serde_json::json!({
+                "role": role,
+                "content": content,
+                "created_at": created_at,
+            })
+        })
+        .collect())
+}
+
+#[tauri::command]
 pub async fn send_message_to_agent(
     agent_id: String,
     message: String,

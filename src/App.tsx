@@ -17,6 +17,7 @@ import {
   getWorkSessionsExport,
   startPairSession,
   endPairSession as endPairSessionApi,
+  getPairSessionMessages,
 } from "@/lib/api";
 import type { Agent, PairSessionEndedEvent, WorkSessionLog } from "@/types";
 
@@ -35,6 +36,7 @@ export default function App() {
     sessions: WorkSessionLog[];
   } | null>(null);
   const [pairSession, setPairSession] = useState<PairSessionState | null>(null);
+  const [pairInitialMessages, setPairInitialMessages] = useState<Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | undefined>(undefined);
   const [cliWarning, setCliWarning] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { agents, loading, refetch } = useAgents();
@@ -93,6 +95,7 @@ export default function App() {
 
   const handleStartPair = async (agent: Agent) => {
     try {
+      setPairInitialMessages(undefined);
       const started = await startPairSession(agent.id, "");
       setSelectedAgentId(agent.id);
       setPairSession({
@@ -147,6 +150,31 @@ export default function App() {
     const agent = pairAgent;
     await cleanupPair(false);
     await handleStartPair(agent);
+  };
+
+  const handleResumePair = async (pastSessionId: string) => {
+    if (!pairAgent) return;
+    const agent = pairAgent;
+    try {
+      const msgs = await getPairSessionMessages(agent.id, pastSessionId);
+      const chatMsgs = msgs.map((m: { role: string; content: string; created_at: string }, i: number) => ({
+        id: `history-${i}-${Date.now()}`,
+        role: m.role as "user" | "agent",
+        text: m.content,
+        timestamp: new Date(m.created_at).getTime(),
+      }));
+      await cleanupPair(false);
+      setPairInitialMessages(chatMsgs);
+      const started = await startPairSession(agent.id, "");
+      setPairSession({
+        agentId: agent.id,
+        sessionId: started.session_id,
+      });
+      refetch();
+    } catch (err) {
+      console.error("Failed to resume pair session:", err);
+      notify("Resume failed", "Could not resume the pair session.");
+    }
   };
 
   const handleImportAgent = () => {
@@ -349,6 +377,8 @@ export default function App() {
             onManualEnd={handleEndPair}
             onNewSession={() => void handleNewPair()}
             onSessionEnded={stableRefetch}
+            onResumeSession={(pastSessionId) => void handleResumePair(pastSessionId)}
+            initialMessages={pairInitialMessages}
           />
         ) : view === "journey" && journeyData ? (
           <JourneyExportView

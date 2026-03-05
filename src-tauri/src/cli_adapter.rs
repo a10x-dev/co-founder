@@ -377,19 +377,36 @@ pub fn clear_pair_preview_urls(session_id: &str) {
 }
 
 pub fn detect_claude_path() -> Option<String> {
-    let output = Command::new("which").arg("claude").output().ok()?;
-
-    if output.status.success() {
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path.is_empty() {
-            return Some(path);
+    // Try `which` first (works in dev / terminal-launched apps)
+    if let Ok(output) = Command::new("which").arg("claude").output() {
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(path);
+            }
         }
     }
+
+    // In production .app bundles, PATH is minimal — check common locations
+    let home = std::env::var("HOME").unwrap_or_default();
+    let candidates = [
+        format!("{home}/.local/bin/claude"),
+        format!("{home}/.claude/local/claude"),
+        "/usr/local/bin/claude".to_string(),
+        "/opt/homebrew/bin/claude".to_string(),
+    ];
+    for candidate in &candidates {
+        if std::path::Path::new(candidate).exists() {
+            return Some(candidate.clone());
+        }
+    }
+
     None
 }
 
 pub fn get_claude_version() -> Option<String> {
-    let output = Command::new("claude").arg("--version").output().ok()?;
+    let claude = detect_claude_path().unwrap_or_else(|| "claude".to_string());
+    let output = Command::new(&claude).arg("--version").output().ok()?;
 
     if output.status.success() {
         let version = String::from_utf8_lossy(&output.stdout).trim().to_string();

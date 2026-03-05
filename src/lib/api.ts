@@ -29,6 +29,10 @@ export async function getWorkSessionsExport(agentId: string): Promise<WorkSessio
   return invoke("get_work_sessions_export", { agentId });
 }
 
+export async function getPairSessionMessages(agentId: string, sessionId: string): Promise<Array<{role: string; content: string; created_at: string}>> {
+  return invoke("get_pair_session_messages", { agentId, sessionId });
+}
+
 export async function getGlobalSettings(): Promise<GlobalSettings> {
   return invoke("get_global_settings");
 }

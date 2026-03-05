@@ -83,7 +83,8 @@ pub fn run() {
                 ],
             )?;
 
-            let icon = app.default_window_icon().cloned().unwrap();
+            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            let icon = tauri::image::Image::from_bytes(tray_icon_bytes)?;
             TrayIconBuilder::new()
                 .icon(icon)
                 .icon_as_template(true)
@@ -258,6 +259,7 @@ pub fn run() {
             commands::start_pair_session,
             commands::send_pair_message,
             commands::end_pair_session,
+            commands::get_pair_session_messages,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

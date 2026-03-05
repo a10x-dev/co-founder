@@ -15,16 +15,18 @@ import {
   Image as ImageIcon,
   ExternalLink,
   X,
+  Clock,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { sendPairMessage, saveInboxImages } from "@/lib/api";
+import { sendPairMessage, saveInboxImages, getWorkSessions } from "@/lib/api";
 import { type AttachedImage, isImageFile, readFileAsThumbnail, readFileAsBase64 } from "@/lib/imageUtils";
 import type {
   Agent,
   PairPreviewDetectedEvent,
   PairSessionEndedEvent,
   PairTurnCompleteEvent,
+  WorkSessionLog,
 } from "@/types";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -35,6 +37,8 @@ interface PairViewProps {
   onManualEnd: () => Promise<void> | void;
   onNewSession: () => void;
   onSessionEnded: () => void;
+  onResumeSession?: (pastSessionId: string) => void;
+  initialMessages?: ChatMessage[];
 }
 
 interface AgentOutputEvent {
@@ -285,6 +289,82 @@ function TypingIndicator() {
   );
 }
 
+// ─── Session history list ────────────────────────────────────────────────────
+
+function SessionHistoryList({
+  sessions,
+  searchQuery,
+  onResume,
+}: {
+  sessions: WorkSessionLog[];
+  searchQuery: string;
+  onResume: (session: WorkSessionLog) => void;
+}) {
+  const filtered = sessions.filter(
+    (s) => !searchQuery || s.summary.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  if (filtered.length === 0) {
+    return (
+      <p className="text-[12px] text-center py-6" style={{ color: "var(--text-tertiary)" }}>
+        No past sessions
+      </p>
+    );
+  }
+
+  const groups: Record<string, WorkSessionLog[]> = {};
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const weekAgo = new Date(today.getTime() - 7 * 86400000);
+
+  for (const s of filtered) {
+    const d = new Date(s.started_at);
+    let label: string;
+    if (d >= today) label = "Today";
+    else if (d >= yesterday) label = "Yesterday";
+    else if (d >= weekAgo) label = "This Week";
+    else label = "Older";
+    (groups[label] ??= []).push(s);
+  }
+
+  const order = ["Today", "Yesterday", "This Week", "Older"];
+  return (
+    <>
+      {order
+        .filter((g) => groups[g]?.length)
+        .map((groupLabel) => (
+          <div key={groupLabel}>
+            <p
+              className="px-3 pt-2 pb-1 text-[11px] font-medium"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              {groupLabel}
+            </p>
+            {groups[groupLabel].map((s) => (
+              <button
+                key={s.id}
+                onClick={() => void onResume(s)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-left cursor-pointer"
+                style={{ color: "var(--text-secondary)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--status-active)", flexShrink: 0 }}>
+                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                  <polyline points="22 4 12 14.01 9 11.01" />
+                </svg>
+                <span className="text-[13px] truncate flex-1">
+                  {s.summary === "Pair session started" ? `Session ${s.session_id.slice(0, 8)}` : s.summary.length > 40 ? s.summary.slice(0, 37) + "\u2026" : s.summary}
+                </span>
+              </button>
+            ))}
+          </div>
+        ))}
+    </>
+  );
+}
+
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export default function PairView({
@@ -293,6 +373,8 @@ export default function PairView({
   onManualEnd,
   onNewSession,
   onSessionEnded,
+  onResumeSession,
+  initialMessages,
 }: PairViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -305,6 +387,11 @@ export default function PairView({
   const [isDragging, setIsDragging] = useState(false);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [sendError, setSendError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [pairSessions, setPairSessions] = useState<WorkSessionLog[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   const activeThinkingIdRef = useRef<string | null>(null);
 
@@ -322,15 +409,22 @@ export default function PairView({
     setCanSend(false);
     setInput("");
     setPreviewUrl(null);
-    setMessages([]);
+    setMessages(initialMessages ?? []);
     setAttachedImages([]);
     setExpandedThinking({});
     setSendError(null);
-    setChatTitle("New Chat");
-    titleDerivedRef.current = false;
+    setHistoryOpen(false);
+    setHistorySearch("");
+    if (initialMessages?.length) {
+      setChatTitle("Resumed Session");
+      titleDerivedRef.current = false;
+    } else {
+      setChatTitle("New Chat");
+      titleDerivedRef.current = false;
+    }
     activeThinkingIdRef.current = null;
     openedUrlsRef.current = new Set();
-  }, [sessionId]);
+  }, [sessionId, initialMessages]);
 
   // ── Derive chat title from first agent response ──────────────────────────
   useEffect(() => {
@@ -528,6 +622,40 @@ export default function PairView({
     window.open(previewUrl, "_blank", "noopener,noreferrer");
   }, [previewUrl]);
 
+  // ── History dropdown ────────────────────────────────────────────────────
+
+  const historyStaleRef = useRef(true);
+  // Mark history stale when a new session starts
+  useEffect(() => { historyStaleRef.current = true; }, [sessionId]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    if (!historyStaleRef.current && pairSessions.length > 0) return;
+    setLoadingHistory(true);
+    getWorkSessions(agent.id).then((sessions) => {
+      const pair = sessions.filter((s) => s.mode === "pair" && s.session_id !== sessionId);
+      setPairSessions(pair);
+      historyStaleRef.current = false;
+      setLoadingHistory(false);
+    }).catch(() => setLoadingHistory(false));
+  }, [historyOpen, agent.id, sessionId]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (historyRef.current && !historyRef.current.contains(e.target as Node)) {
+        setHistoryOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [historyOpen]);
+
+  const handleResumeSession = (pastSession: WorkSessionLog) => {
+    setHistoryOpen(false);
+    onResumeSession?.(pastSession.session_id);
+  };
+
   // ── Image attachment ─────────────────────────────────────────────────────
   const MAX_IMAGES = 10;
 
@@ -700,6 +828,60 @@ export default function PairView({
           <Plus size={14} />
         </button>
 
+        {/* History */}
+        <div className="relative" ref={historyRef}>
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="h-7 w-7 flex items-center justify-center rounded-md cursor-pointer"
+            style={{
+              color: "var(--text-tertiary)",
+              background: historyOpen ? "var(--bg-inset)" : "transparent",
+            }}
+            title="Session history"
+            onMouseEnter={(e) => { if (!historyOpen) e.currentTarget.style.background = "var(--bg-inset)"; }}
+            onMouseLeave={(e) => { if (!historyOpen) e.currentTarget.style.background = "transparent"; }}
+          >
+            <Clock size={14} />
+          </button>
+
+          {historyOpen && (
+            <div
+              className="absolute left-0 top-full mt-1 w-72 rounded-lg overflow-hidden shadow-lg z-50"
+              style={{
+                background: "var(--bg-surface)",
+                border: "1px solid var(--border-default)",
+              }}
+            >
+              {/* Search */}
+              <div className="px-3 py-2" style={{ borderBottom: "1px solid var(--border-default)" }}>
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Search sessions…"
+                  autoFocus
+                  className="w-full bg-transparent text-[13px] outline-none"
+                  style={{ color: "var(--text-primary)" }}
+                />
+              </div>
+
+              {/* Session list */}
+              <div className="max-h-80 overflow-y-auto py-1">
+                {loadingHistory ? (
+                  <div className="flex items-center justify-center py-6">
+                    <Loader2 size={14} className="animate-spin" style={{ color: "var(--text-tertiary)" }} />
+                  </div>
+                ) : (
+                  <SessionHistoryList
+                    sessions={pairSessions}
+                    searchQuery={historySearch}
+                    onResume={handleResumeSession}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div className="flex-1" />
 

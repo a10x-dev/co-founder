@@ -811,6 +811,35 @@ impl Database {
         // Reverse so oldest first
         Ok(rows.into_iter().rev().collect())
     }
+
+    pub fn get_pair_messages_by_session(
+        &self,
+        agent_id: &Uuid,
+        session_id: &str,
+    ) -> Result<Vec<(String, String, String)>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT role, content, created_at FROM pair_messages
+                 WHERE agent_id = ?1 AND session_id = ?2
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| format!("Query error: {e}"))?;
+
+        let rows = stmt
+            .query_map(params![agent_id.to_string(), session_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| format!("Query error: {e}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Row error: {e}"))?;
+
+        Ok(rows)
+    }
 }
 
 fn dirs_data_dir() -> Option<String> {
