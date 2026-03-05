@@ -139,6 +139,15 @@ export async function readArtifactsManifest(agentId: string): Promise<Artifact[]
   });
 }
 
+export async function updateArtifactStatus(agentId: string, artifactId: string, status: import("@/types").ArtifactStatus): Promise<void> {
+  const artifacts = await readArtifactsManifest(agentId);
+  const idx = artifacts.findIndex((a) => a.id === artifactId);
+  if (idx === -1) return;
+  artifacts[idx].status = status;
+  artifacts[idx].updated_at = new Date().toISOString();
+  await writeTextFile(agentId, ".founder/artifacts/manifest.json", JSON.stringify(artifacts, null, 2));
+}
+
 export async function readToolsManifest(agentId: string): Promise<ToolManifestEntry[]> {
   return invoke<string>("read_tools_manifest", { agentId }).then((raw) => {
     try { return JSON.parse(raw) as ToolManifestEntry[]; } catch { return []; }

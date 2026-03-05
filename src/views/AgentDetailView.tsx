@@ -614,7 +614,13 @@ export default function AgentDetailView({
           clearSessions={async () => { await clearAgentSessions(agent.id); setSessions([]); onRefetch(); }}
         />
       )}
-      {activeTab === "artifacts" && <ArtifactsTab artifacts={artifacts} />}
+      {activeTab === "artifacts" && (
+        <ArtifactsTab
+          artifacts={artifacts}
+          agentId={agent.id}
+          onArtifactsChanged={() => readArtifactsManifest(agent.id).then(setArtifacts).catch(() => {})}
+        />
+      )}
       {activeTab === "tools" && <ToolsTab tools={tools} />}
       {activeTab === "reports" && <ReportsTab agentId={agent.id} reports={reports} setReports={setReports} />}
     </div>

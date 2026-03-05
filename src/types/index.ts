@@ -123,6 +123,8 @@ export interface FolderInspectionResponse {
   readme_summary: string | null;
 }
 
+export type ArtifactStatus = "draft" | "approved" | "posted";
+
 export interface Artifact {
   id: string;
   title: string;
@@ -130,6 +132,7 @@ export interface Artifact {
   description?: string;
   data: unknown;
   updated_at: string;
+  status?: ArtifactStatus; // for markdown content artifacts
 }
 
 export interface ToolManifestEntry {

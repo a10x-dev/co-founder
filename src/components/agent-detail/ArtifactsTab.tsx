@@ -1,6 +1,13 @@
 import { useState } from "react";
-import type { Artifact } from "@/types";
+import type { Artifact, ArtifactStatus } from "@/types";
 import { formatRelativeTime } from "@/lib/formatTime";
+import { updateArtifactStatus } from "@/lib/api";
+
+const STATUS_CONFIG: Record<ArtifactStatus, { label: string; color: string; bg: string; next: ArtifactStatus }> = {
+  draft: { label: "Draft", color: "#8b8b8b", bg: "var(--bg-inset)", next: "approved" },
+  approved: { label: "Ready to Post", color: "#2563eb", bg: "rgba(37, 99, 235, 0.1)", next: "posted" },
+  posted: { label: "Posted", color: "#16a34a", bg: "rgba(22, 163, 74, 0.1)", next: "draft" },
+};
 
 function TableRenderer({ data }: { data: unknown }) {
   if (!Array.isArray(data) || data.length === 0) return null;
@@ -116,13 +123,15 @@ function TableDetail({ artifact, onBack }: { artifact: Artifact; onBack: () => v
   );
 }
 
-function ArtifactDetail({ artifact, onBack }: { artifact: Artifact; onBack: () => void }) {
+function ArtifactDetail({ artifact, onBack, onStatusChange }: { artifact: Artifact; onBack: () => void; onStatusChange?: (id: string, status: ArtifactStatus) => void }) {
   if (artifact.type === "table") {
     return <TableDetail artifact={artifact} onBack={onBack} />;
   }
 
   const [copied, setCopied] = useState(false);
   const content = typeof artifact.data === "string" ? artifact.data : JSON.stringify(artifact.data, null, 2);
+  const status = artifact.status || "draft";
+  const cfg = artifact.type === "markdown" ? STATUS_CONFIG[status] : null;
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
@@ -143,7 +152,26 @@ function ArtifactDetail({ artifact, onBack }: { artifact: Artifact; onBack: () =
         <div className="flex-1 min-w-0">
           <h2 className="text-[17px] font-semibold truncate" style={{ color: "var(--text-primary)" }}>{artifact.title}</h2>
         </div>
-        <span className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase shrink-0" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{artifact.type}</span>
+        {cfg && (
+          <button
+            onClick={() => onStatusChange?.(artifact.id, cfg.next)}
+            className="px-2.5 py-1 rounded-lg text-[12px] font-medium transition-colors"
+            style={{ background: STATUS_CONFIG[cfg.next].bg, color: STATUS_CONFIG[cfg.next].color }}
+          >
+            {status === "draft" ? "Approve" : status === "approved" ? "Mark Posted" : "Reset to Draft"}
+          </button>
+        )}
+        {cfg && (
+          <span
+            className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase shrink-0"
+            style={{ background: cfg.bg, color: cfg.color }}
+          >
+            {cfg.label}
+          </span>
+        )}
+        {!cfg && (
+          <span className="px-2 py-0.5 rounded text-[11px] font-semibold uppercase shrink-0" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{artifact.type}</span>
+        )}
       </div>
       {artifact.description && (
         <p className="text-[13px]" style={{ color: "var(--text-tertiary)" }}>{artifact.description}</p>
@@ -172,14 +200,36 @@ function ArtifactDetail({ artifact, onBack }: { artifact: Artifact; onBack: () =
 
 export interface ArtifactsTabProps {
   artifacts: Artifact[];
+  agentId?: string;
+  onArtifactsChanged?: () => void;
 }
 
-export default function ArtifactsTab({ artifacts }: ArtifactsTabProps) {
+export default function ArtifactsTab({ artifacts, agentId, onArtifactsChanged }: ArtifactsTabProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const selected = artifacts.find((a) => a.id === selectedId);
 
+  const handleStatusChange = async (artifactId: string, newStatus: ArtifactStatus) => {
+    if (!agentId) return;
+    setUpdatingStatus(artifactId);
+    try {
+      await updateArtifactStatus(agentId, artifactId, newStatus);
+      onArtifactsChanged?.();
+    } catch (e) {
+      console.error("Failed to update artifact status:", e);
+    } finally {
+      setUpdatingStatus(null);
+    }
+  };
+
   if (selected) {
-    return <ArtifactDetail artifact={selected} onBack={() => setSelectedId(null)} />;
+    return (
+      <ArtifactDetail
+        artifact={selected}
+        onBack={() => setSelectedId(null)}
+        onStatusChange={(id, status) => handleStatusChange(id, status)}
+      />
+    );
   }
 
   const metrics = artifacts.filter((a) => a.type !== "markdown");
@@ -241,24 +291,59 @@ export default function ArtifactsTab({ artifacts }: ArtifactsTabProps) {
 
       {content.length > 0 && (
         <div>
-          <h3 className="text-[13px] font-semibold uppercase tracking-wide mb-3" style={{ color: "var(--text-tertiary)" }}>Launch Content</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-semibold uppercase tracking-wide" style={{ color: "var(--text-tertiary)" }}>Launch Content</h3>
+            <div className="flex items-center gap-3 text-[11px]" style={{ color: "var(--text-tertiary)" }}>
+              <span>{content.filter(a => (a.status || "draft") === "posted").length}/{content.length} posted</span>
+            </div>
+          </div>
           <div className="space-y-2">
-            {content.map((artifact) => (
-              <div
-                key={artifact.id}
-                className="rounded-xl border p-4 cursor-pointer transition-colors hover:border-[var(--border-hover)]"
-                style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
-                onClick={() => setSelectedId(artifact.id)}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[15px] font-medium" style={{ color: "var(--text-primary)" }}>{artifact.title}</p>
-                    {artifact.description && <p className="text-[13px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{artifact.description}</p>}
+            {content.map((artifact) => {
+              const status = artifact.status || "draft";
+              const cfg = STATUS_CONFIG[status];
+              return (
+                <div
+                  key={artifact.id}
+                  className="rounded-xl border p-4 cursor-pointer transition-colors hover:border-[var(--border-hover)]"
+                  style={{ background: "var(--bg-surface)", borderColor: "var(--border-default)" }}
+                  onClick={() => setSelectedId(artifact.id)}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <p className="text-[15px] font-medium truncate" style={{ color: "var(--text-primary)" }}>{artifact.title}</p>
+                        <span
+                          className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase shrink-0"
+                          style={{ background: cfg.bg, color: cfg.color }}
+                        >
+                          {cfg.label}
+                        </span>
+                      </div>
+                      {artifact.description && <p className="text-[13px] mt-0.5" style={{ color: "var(--text-tertiary)" }}>{artifact.description}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStatusChange(artifact.id, cfg.next);
+                        }}
+                        disabled={updatingStatus === artifact.id}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors"
+                        style={{
+                          background: STATUS_CONFIG[cfg.next].bg,
+                          color: STATUS_CONFIG[cfg.next].color,
+                          opacity: updatingStatus === artifact.id ? 0.5 : 1,
+                        }}
+                        title={`Mark as ${STATUS_CONFIG[cfg.next].label}`}
+                      >
+                        {updatingStatus === artifact.id ? "..." : status === "draft" ? "Approve" : status === "approved" ? "Mark Posted" : "Reset"}
+                      </button>
+                      <span className="text-[18px]" style={{ color: "var(--text-tertiary)" }}>&rsaquo;</span>
+                    </div>
                   </div>
-                  <span className="text-[18px] ml-3 shrink-0" style={{ color: "var(--text-tertiary)" }}>&rsaquo;</span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

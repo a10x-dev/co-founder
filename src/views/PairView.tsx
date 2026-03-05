@@ -357,7 +357,9 @@ function SessionHistoryList({
                   <polyline points="22 4 12 14.01 9 11.01" />
                 </svg>
                 <span className="text-[13px] truncate flex-1">
-                  {s.summary === "Pair session started" ? `Session ${s.session_id.slice(0, 8)}` : s.summary.length > 40 ? s.summary.slice(0, 37) + "\u2026" : s.summary}
+                  {s.summary === "Pair session started" || s.summary === "Pair session ended by user"
+                    ? `Session ${s.session_id.slice(0, 8)}`
+                    : s.summary.length > 50 ? s.summary.slice(0, 47) + "\u2026" : s.summary}
                 </span>
               </button>
             ))}

@@ -10,6 +10,40 @@ use crate::process_pool::ProcessPool;
 use crate::state_manager::StateManager;
 use tauri::{AppHandle, Emitter};
 
+/// Generate a concise session name from the first user message.
+/// Extracts the core topic/intent from what the user asked about.
+fn generate_session_name(first_message: Option<&str>) -> String {
+    let msg = match first_message {
+        Some(m) if !m.trim().is_empty() => m.trim(),
+        _ => return "Quick pair session".to_string(),
+    };
+
+    // Take the first line (or first sentence) as the session name
+    let first_line = msg.lines().next().unwrap_or(msg);
+
+    // Clean up: remove leading punctuation, trim
+    let cleaned = first_line
+        .trim_start_matches(|c: char| c == '-' || c == '*' || c == '#' || c == '>' || c.is_whitespace())
+        .trim();
+
+    if cleaned.is_empty() {
+        return "Quick pair session".to_string();
+    }
+
+    // Truncate to a reasonable length for display
+    let max_len = 60;
+    if cleaned.len() <= max_len {
+        cleaned.to_string()
+    } else {
+        // Find a word boundary near the limit
+        let truncated = &cleaned[..max_len];
+        match truncated.rfind(' ') {
+            Some(pos) if pos > max_len / 2 => format!("{}...", &cleaned[..pos]),
+            _ => format!("{}...", truncated),
+        }
+    }
+}
+
 pub struct WorkSessionEngine;
 
 pub struct SessionResult {
@@ -558,6 +592,12 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         let mut all_events: Vec<crate::cli_adapter::StreamEvent> = Vec::new();
 
         let mut outcome = SessionOutcome::Completed;
+        // Track the first substantive user message for session naming
+        let mut first_user_message: Option<String> = if !initial_message.trim().is_empty() {
+            Some(initial_message.clone())
+        } else {
+            None
+        };
         let mut prompt = build_pair_kickoff_prompt(
             &mission_content,
             &state_content,
@@ -697,11 +737,16 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
                         "user",
                         &next_prompt,
                     );
+                    if first_user_message.is_none() && !next_prompt.trim().is_empty() {
+                        first_user_message = Some(next_prompt.clone());
+                    }
                     prompt = next_prompt;
                 }
                 Some(crate::LiveMessage::End) => {
                     user_ended = true;
-                    break "Pair session ended by user".to_string();
+                    // Generate a meaningful session name from the first user message
+                    let session_name = generate_session_name(first_user_message.as_deref());
+                    break session_name;
                 }
                 None => {
                     outcome = SessionOutcome::Interrupted;
