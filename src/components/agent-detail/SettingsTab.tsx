@@ -70,13 +70,24 @@ export default function SettingsTab({
     try {
       const { ask: tauriAsk } = await import("@tauri-apps/plugin-dialog");
       confirmed = await tauriAsk("Delete this co-founder? This cannot be undone.", { title: "Delete Co-Founder", kind: "warning" });
-    } catch { confirmed = window.confirm("Delete this co-founder? This cannot be undone."); }
+    } catch {
+      // Fallback to native confirm if Tauri dialog is unavailable
+      confirmed = window.confirm("Delete this co-founder? This cannot be undone.");
+    }
     if (!confirmed) return;
     setDeleting(true);
     try {
       const { deleteAgent } = await import("@/lib/api");
       await deleteAgent(agent.id, removeFounderFiles);
       onDeleted();
+    } catch (err) {
+      console.error("[DELETE_AGENT]", err);
+      try {
+        const { message: tauriMsg } = await import("@tauri-apps/plugin-dialog");
+        await tauriMsg(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`, { title: "Error", kind: "error" });
+      } catch {
+        window.alert(`Failed to delete: ${err instanceof Error ? err.message : String(err)}`);
+      }
     } finally { setDeleting(false); }
   };
 

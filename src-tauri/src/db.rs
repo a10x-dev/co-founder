@@ -378,12 +378,25 @@ impl Database {
 
     pub fn delete_agent(&self, id: &Uuid) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let id_str = id.to_string();
+        // Delete all related data first (child tables)
+        conn.execute(
+            "DELETE FROM pair_messages WHERE agent_id = ?1",
+            params![&id_str],
+        )
+        .map_err(|e| format!("Delete pair_messages error: {e}"))?;
+        conn.execute(
+            "DELETE FROM agent_env_vars WHERE agent_id = ?1",
+            params![&id_str],
+        )
+        .map_err(|e| format!("Delete env_vars error: {e}"))?;
         conn.execute(
             "DELETE FROM work_sessions WHERE agent_id = ?1",
-            params![id.to_string()],
+            params![&id_str],
         )
         .map_err(|e| format!("Delete sessions error: {e}"))?;
-        conn.execute("DELETE FROM agents WHERE id = ?1", params![id.to_string()])
+        // Finally delete the agent itself
+        conn.execute("DELETE FROM agents WHERE id = ?1", params![&id_str])
             .map_err(|e| format!("Delete error: {e}"))?;
         Ok(())
     }
