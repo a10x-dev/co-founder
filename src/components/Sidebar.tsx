@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Plus, FolderOpen, Settings, PanelLeftClose, PanelLeft } from "lucide-react";
+import { Plus, FolderOpen, Settings, PanelLeftClose, PanelLeft, MessageCircle } from "lucide-react";
 import type { Agent, AgentStatus } from "@/types";
 
 function StarburstIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
@@ -34,6 +34,7 @@ interface SidebarProps {
   onNewAgent: () => void;
   onImportAgent: () => void;
   onSettings: () => void;
+  onFeedback: () => void;
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -71,6 +72,7 @@ export default function Sidebar({
   onNewAgent,
   onImportAgent,
   onSettings,
+  onFeedback,
 }: SidebarProps) {
   const [width, setWidth] = useState(getStoredWidth);
   const dragging = useRef(false);
@@ -185,6 +187,13 @@ export default function Sidebar({
             title="Settings"
           >
             <Settings size={16} />
+          </button>
+          <button onClick={onFeedback} className={miniBtn} style={{ color: "var(--text-tertiary)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            title="Send Feedback"
+          >
+            <MessageCircle size={16} />
           </button>
         </div>
       </div>
@@ -320,6 +329,20 @@ export default function Sidebar({
           >
             <Settings size={16} strokeWidth={2} />
             Settings
+          </button>
+          <button
+            onClick={onFeedback}
+            className="flex items-center gap-2.5 w-full px-3 py-2 rounded-lg text-[14px] font-medium transition-all duration-100 ease-out cursor-pointer"
+            style={{ color: "var(--text-secondary)" }}
+            onMouseEnter={(e) =>
+              (e.currentTarget.style.background = "var(--bg-hover)")
+            }
+            onMouseLeave={(e) =>
+              (e.currentTarget.style.background = "transparent")
+            }
+          >
+            <MessageCircle size={16} strokeWidth={2} />
+            Send Feedback
           </button>
         </div>
       </aside>

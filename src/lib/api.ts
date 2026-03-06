@@ -256,3 +256,17 @@ export async function installClaudeCli(): Promise<string> {
 export async function checkClaudeCliStatus(): Promise<{installed: boolean; path: string | null; version: string | null}> {
   return invoke("check_claude_cli_status");
 }
+
+export async function sendFeedback(message: string, email?: string): Promise<void> {
+  const res = await fetch("https://agentfounder.ai/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      email: email || undefined,
+      app_version: "0.2.1",
+      os: navigator.platform,
+    }),
+  });
+  if (!res.ok) throw new Error("Failed to send feedback");
+}

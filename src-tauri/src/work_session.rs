@@ -808,7 +808,7 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         let log = WorkSessionLog {
             id: log_id,
             agent_id: agent.id,
-            session_id: claude_session_id.unwrap_or_else(|| pair_session_id.clone()),
+            session_id: pair_session_id.clone(),
             mode: WorkSessionMode::Pair,
             started_at,
             ended_at: Some(Utc::now().to_rfc3339()),

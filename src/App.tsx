@@ -14,6 +14,7 @@ import { useAgents } from "@/hooks/useAgents";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useUpdater } from "@/hooks/useUpdater";
 import { UpdateNotification } from "@/components/UpdateNotification";
+import FeedbackModal from "@/components/FeedbackModal";
 import {
   getGlobalSettings,
   getWorkSessionsExport,
@@ -43,6 +44,7 @@ export default function App() {
   const [readOnlyMessages, setReadOnlyMessages] = useState<Array<{ id: string; role: "user" | "agent"; text: string; timestamp: number }> | null>(null);
   const [cliReady, setCliReady] = useState<boolean | null>(null); // null = checking
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const { agents, loading, refetch } = useAgents();
   const { notify } = useNotifications();
   const { status: updateStatus, updateInfo, downloadProgress, downloadAndInstall, dismiss: dismissUpdate } = useUpdater();
@@ -335,6 +337,7 @@ export default function App() {
         onNewAgent={handleNewAgent}
         onImportAgent={handleImportAgent}
         onSettings={handleSettings}
+        onFeedback={() => setFeedbackOpen(true)}
       />
 
       <main
@@ -438,6 +441,7 @@ export default function App() {
         onDownload={downloadAndInstall}
         onDismiss={dismissUpdate}
       />
+      <FeedbackModal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </div>
   );
 }
