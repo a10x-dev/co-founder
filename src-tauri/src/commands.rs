@@ -1408,6 +1408,61 @@ pub struct ScheduleEntry {
     pub day_of_week: Option<u8>,
 }
 
+// --- Feedback ---
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct FeedbackImage {
+    pub data: String,
+    pub name: String,
+}
+
+#[tauri::command]
+pub async fn send_feedback(
+    message: String,
+    email: Option<String>,
+    feedback_type: Option<String>,
+    images: Option<Vec<FeedbackImage>>,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut form = reqwest::multipart::Form::new()
+        .text("message", message)
+        .text("source", "desktop")
+        .text("app_version", "0.2.3")
+        .text("os", std::env::consts::OS.to_string());
+
+    if let Some(e) = email {
+        form = form.text("email", e);
+    }
+    if let Some(t) = feedback_type {
+        form = form.text("type", t);
+    }
+    if let Some(imgs) = images {
+        for (i, img) in imgs.into_iter().enumerate() {
+            let bytes = general_purpose::STANDARD
+                .decode(&img.data)
+                .map_err(|e| format!("Invalid image data: {e}"))?;
+            let part = reqwest::multipart::Part::bytes(bytes)
+                .file_name(img.name)
+                .mime_str("image/png")
+                .map_err(|e| format!("Mime error: {e}"))?;
+            let field_name = if i == 0 { "image".to_string() } else { format!("image_{}", i) };
+            form = form.part(field_name, part);
+        }
+    }
+
+    let res = client
+        .post("https://agentfounder.ai/api/feedback")
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {e}"))?;
+
+    if !res.status().is_success() {
+        return Err(format!("Server returned status {}", res.status()));
+    }
+    Ok(())
+}
+
 fn parse_schedule(content: &str) -> Vec<ScheduleEntry> {
     let mut entries = Vec::new();
     for line in content.lines() {

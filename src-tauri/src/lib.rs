@@ -68,6 +68,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(app_state)
         .setup(|app| {
             let open_item = MenuItem::with_id(app, "open", "Open Co-Founder", true, None::<&str>)?;
@@ -264,6 +265,7 @@ pub fn run() {
             commands::send_pair_message,
             commands::end_pair_session,
             commands::get_pair_session_messages,
+            commands::send_feedback,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

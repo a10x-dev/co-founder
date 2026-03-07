@@ -6,6 +6,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import remarkGfm from "remark-gfm";
 import type { Agent, WorkSessionLog, GitStatus, TaskBoard } from "@/types";
 import {
@@ -36,7 +37,7 @@ const summaryMdComponents: React.ComponentProps<typeof ReactMarkdown>["component
     }
     return <code className="px-1 py-0.5 rounded text-[12px]" style={{ background: "var(--bg-inset)", color: "var(--text-primary)", fontFamily: "'Geist Mono', monospace" }}>{children}</code>;
   },
-  a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2" style={{ color: "var(--text-primary)" }}>{children}</a>,
+  a: ({ href, children }) => <a href={href} onClick={(e) => { e.preventDefault(); if (href) openUrl(href).catch(console.error); }} className="underline underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity" style={{ color: "var(--accent-primary, #6366f1)" }}>{children}</a>,
   hr: () => <hr className="my-2" style={{ borderColor: "var(--border-default)" }} />,
 };
 

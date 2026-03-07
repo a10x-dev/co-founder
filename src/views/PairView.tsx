@@ -18,6 +18,7 @@ import {
   Clock,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import remarkGfm from "remark-gfm";
 import { sendPairMessage, saveInboxImages, getWorkSessions } from "@/lib/api";
 import { type AttachedImage, isImageFile, readFileAsThumbnail, readFileAsBase64 } from "@/lib/imageUtils";
@@ -164,10 +165,12 @@ const mdComponents: React.ComponentProps<typeof ReactMarkdown>["components"] = {
   a: ({ href, children }) => (
     <a
       href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="underline underline-offset-2"
-      style={{ color: "var(--text-primary)" }}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href) openUrl(href).catch(console.error);
+      }}
+      className="underline underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity"
+      style={{ color: "var(--accent-primary, #6366f1)" }}
     >
       {children}
     </a>

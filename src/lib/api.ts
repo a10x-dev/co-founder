@@ -257,16 +257,35 @@ export async function checkClaudeCliStatus(): Promise<{installed: boolean; path:
   return invoke("check_claude_cli_status");
 }
 
-export async function sendFeedback(message: string, email?: string): Promise<void> {
-  const res = await fetch("https://agentfounder.ai/api/feedback", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      email: email || undefined,
-      app_version: "0.2.1",
-      os: navigator.platform,
-    }),
+async function fileToBase64(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+export async function sendFeedback(
+  message: string,
+  email?: string,
+  type?: string,
+  images?: File[],
+): Promise<void> {
+  const imagesPayload: Array<{ data: string; name: string }> = [];
+  if (images) {
+    for (const img of images) {
+      imagesPayload.push({
+        data: await fileToBase64(img),
+        name: img.name,
+      });
+    }
+  }
+  return invoke("send_feedback", {
+    message,
+    email: email || null,
+    feedbackType: type || null,
+    images: imagesPayload.length > 0 ? imagesPayload : null,
   });
-  if (!res.ok) throw new Error("Failed to send feedback");
 }
