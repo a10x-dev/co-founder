@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getVersion } from "@tauri-apps/api/app";
 import { FolderOpen, Search, ChevronDown, ChevronRight } from "lucide-react";
 import { detectClaudeCli, getGlobalSettings, updateGlobalSettings, getDbSize, getClaudeVersion } from "@/lib/api";
 import type { GlobalSettings } from "@/types";
@@ -19,6 +20,7 @@ export default function SettingsView() {
   const [dbSize, setDbSize] = useState<number | null>(null);
   const [cliVersion, setCliVersion] = useState<string | null>(null);
   const [cliAutoDetected, setCliAutoDetected] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -46,6 +48,10 @@ export default function SettingsView() {
 
     detectClaudeCli()
       .then((path) => { if (active && path) setCliAutoDetected(true); })
+      .catch(() => {});
+
+    getVersion()
+      .then((v) => { if (active) setAppVersion(v); })
       .catch(() => {});
 
     return () => {
@@ -304,6 +310,15 @@ export default function SettingsView() {
           {error && <FriendlyError error={error} />}
         </div>
       </div>
+
+      {/* App version footer */}
+      {appVersion && (
+        <div className="mt-6 text-center">
+          <p className="text-[12px] font-mono" style={{ color: "var(--text-tertiary)" }}>
+            Co-Founder v{appVersion}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
