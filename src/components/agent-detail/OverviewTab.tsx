@@ -361,23 +361,27 @@ export default function OverviewTab({
               return (
                 <div
                   key={session.id}
-                  onClick={() => setExpandedSessionId((id) => (id === session.id ? null : session.id))}
-                  className="cursor-pointer transition-all duration-150 ease-out"
-                  style={{ minHeight: 48, padding: "12px 16px", borderBottom: idx < sessions.length - 1 ? "1px solid var(--border-default)" : "none" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "var(--bg-surface)"; }}
+                  style={{ borderBottom: idx < sessions.length - 1 ? "1px solid var(--border-default)" : "none" }}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex-1 min-w-0 flex items-center gap-3">
-                      <span className="text-[14px] shrink-0" style={{ color: "var(--text-primary)" }}>{formatSessionDate(session.started_at)}</span>
-                      <span className="text-[14px] truncate" style={{ color: "var(--text-secondary)" }}>- {truncate(session.summary || "No summary", 60)}</span>
-                      <span className="shrink-0 px-2 py-0.5 rounded text-[12px] font-medium" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{formatSessionDuration(session.started_at, session.ended_at)}</span>
-                      <span className="shrink-0 px-2 py-0.5 rounded-full text-[12px] font-medium" style={{ background: `color-mix(in srgb, ${outcomeConfig.color} 10%, transparent)`, color: outcomeConfig.color }}>{outcomeConfig.label}</span>
+                  <div
+                    onClick={() => setExpandedSessionId((id) => (id === session.id ? null : session.id))}
+                    className="cursor-pointer transition-all duration-150 ease-out"
+                    style={{ minHeight: 48, padding: "12px 16px" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0 flex items-center gap-3">
+                        <span className="text-[14px] shrink-0" style={{ color: "var(--text-primary)" }}>{formatSessionDate(session.started_at)}</span>
+                        <span className="text-[14px] truncate" style={{ color: "var(--text-secondary)" }}>- {truncate(session.summary || "No summary", 60)}</span>
+                        <span className="shrink-0 px-2 py-0.5 rounded text-[12px] font-medium" style={{ background: "var(--bg-inset)", color: "var(--text-tertiary)" }}>{formatSessionDuration(session.started_at, session.ended_at)}</span>
+                        <span className="shrink-0 px-2 py-0.5 rounded-full text-[12px] font-medium" style={{ background: `color-mix(in srgb, ${outcomeConfig.color} 10%, transparent)`, color: outcomeConfig.color }}>{outcomeConfig.label}</span>
+                      </div>
                     </div>
                   </div>
                   {isExpanded && (
-                    <div className="mt-3 pt-3" onClick={(e) => e.stopPropagation()} style={{ borderTop: "1px solid var(--border-default)" }}>
-                      <div className="text-[14px] mb-2" style={{ color: "var(--text-secondary)" }}>
+                    <div className="pt-3 pb-3" onClick={(e) => e.stopPropagation()} style={{ padding: "0 16px 12px 16px", borderTop: "1px solid var(--border-default)", background: "var(--bg-surface)" }}>
+                      <div className="text-[14px] mb-2 pt-3" style={{ color: "var(--text-secondary)" }}>
                         <ReactMarkdown remarkPlugins={[remarkGfm]} components={summaryMdComponents}>{session.summary || "No summary"}</ReactMarkdown>
                       </div>
                       <div className="flex items-center gap-4 text-[13px] mb-2" style={{ color: "var(--text-tertiary)" }}>
