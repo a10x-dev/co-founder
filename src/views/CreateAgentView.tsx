@@ -1,45 +1,61 @@
 import { useState } from "react";
-import { Package, Globe, Smartphone, ShoppingCart } from "lucide-react";
+import { Briefcase, Code2, TrendingUp, HandCoins, Calculator, Lightbulb } from "lucide-react";
 import type { Agent, CreateAgentRequest } from "@/types";
 import { PERSONALITIES, CHECKIN_OPTIONS, AUTONOMY_OPTIONS } from "@/lib/wizardConstants";
 import { createAgent } from "@/lib/api";
 import FriendlyError from "@/components/FriendlyError";
 import { extractError } from "@/lib/friendlyErrors";
 
-const STEPS = ["Idea", "Personality", "Schedule"] as const;
+const STEPS = ["Role", "Work Style", "Schedule"] as const;
 
-const TEMPLATES = [
+const ROLE_TEMPLATES = [
   {
-    id: "saas",
-    name: "SaaS Product",
-    icon: Package,
-    subtitle: "Web app with auth & billing",
+    id: "general",
+    name: "General Co-Founder",
+    icon: Briefcase,
+    subtitle: "Strategy, product, growth — everything",
     mission:
-      "Build a web application with user authentication, billing via Stripe, and an admin dashboard.",
+      "Build and grow my business — handle strategy, product, engineering, marketing, and growth.",
   },
   {
-    id: "landing",
-    name: "Landing Page",
-    icon: Globe,
-    subtitle: "Marketing site",
+    id: "cto",
+    name: "CTO / Technical",
+    icon: Code2,
+    subtitle: "Architecture, code, infrastructure",
     mission:
-      "Create a beautiful, responsive marketing website to launch and promote my product.",
+      "Own the technical strategy and engineering — build the product, ship features, manage infrastructure.",
   },
   {
-    id: "mobile",
-    name: "Mobile App",
-    icon: Smartphone,
-    subtitle: "Cross-platform app",
+    id: "growth",
+    name: "Growth / Marketing",
+    icon: TrendingUp,
+    subtitle: "Users, content, funnels, SEO",
     mission:
-      "Build a cross-platform mobile application with modern UI and backend API.",
+      "Drive user acquisition and revenue growth — run experiments, create content, optimize funnels, find distribution.",
   },
   {
-    id: "ecommerce",
-    name: "E-commerce",
-    icon: ShoppingCart,
-    subtitle: "Online store",
+    id: "sales",
+    name: "Sales",
+    icon: HandCoins,
+    subtitle: "Outreach, pipeline, revenue",
     mission:
-      "Build an online store with product catalog, shopping cart, and checkout flow.",
+      "Build and run the sales engine — research prospects, write outreach, prepare proposals, close deals.",
+  },
+  {
+    id: "finance",
+    name: "Finance / Ops",
+    icon: Calculator,
+    subtitle: "Budgets, runway, operations",
+    mission:
+      "Manage finances and operations — build models, track runway, automate workflows, keep the business running.",
+  },
+  {
+    id: "product",
+    name: "Product",
+    icon: Lightbulb,
+    subtitle: "Features, UX, user feedback",
+    mission:
+      "Own product strategy — prioritize features, design user flows, synthesize feedback, ship what matters.",
   },
 ] as const;
 
@@ -166,21 +182,20 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="font-semibold"
                   style={{ fontSize: 28, color: "var(--text-primary)" }}
                 >
-                  What do you want to build?
+                  What kind of co-founder do you need?
                 </h1>
                 <p
                   className="mt-2"
                   style={{ fontSize: 15, color: "var(--text-secondary)" }}
                 >
-                  Describe your idea in a few sentences. Your co-founder will figure out
-                  the rest.
+                  Pick a role or describe your mission. Your co-founder takes it from there.
                 </p>
               </div>
 
               <textarea
                 value={mission}
                 onChange={(e) => setMission(e.target.value)}
-                placeholder="I want to build a SaaS that helps small businesses track their inventory..."
+                placeholder="I want to launch a DTC brand in LatAm, build an MVP, grow to 1K users..."
                 rows={4}
                 className="w-full rounded-lg resize-none outline-none transition-all duration-150 ease-out"
                 style={{
@@ -196,19 +211,18 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
                   className="mb-2"
                   style={{ fontSize: 13, color: "var(--text-tertiary)" }}
                 >
-                  Or start from a template:
+                  Or pick a co-founder role:
                 </p>
-                <div className="flex gap-2 overflow-x-auto pb-1">
-                  {TEMPLATES.map((t) => {
+                <div className="grid grid-cols-3 gap-2 pb-1">
+                  {ROLE_TEMPLATES.map((t) => {
                     const Icon = t.icon;
                     return (
                       <button
                         key={t.id}
                         type="button"
                         onClick={() => setMission(t.mission)}
-                        className="flex flex-col items-start shrink-0 rounded-lg transition-all duration-150 ease-out cursor-pointer"
+                        className="flex flex-col items-start rounded-lg transition-all duration-150 ease-out cursor-pointer"
                         style={{
-                          minWidth: 130,
                           padding: 12,
                           background: "var(--bg-surface)",
                           border: "1px solid var(--border-default)",
@@ -516,7 +530,7 @@ export default function CreateAgentView({ onCreated, onCancel }: CreateAgentView
             {step === 3
               ? isSubmitting
                 ? "Starting..."
-                : "Start Building"
+                : "Launch Co-Founder"
               : "Next"}
           </button>
         </div>

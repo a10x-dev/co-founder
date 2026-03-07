@@ -14,8 +14,8 @@ export const PERSONALITIES = [
     name: "Build Carefully",
     icon: Layers,
     description:
-      "Plans before building. Writes thorough, tested code. Takes longer but rock-solid.",
-    bestFor: "Best for: production systems and long-term projects",
+      "Plans before acting. Thorough research, solid execution. Takes longer but rock-solid.",
+    bestFor: "Best for: complex projects and long-term strategy",
   },
   {
     id: "explore_creatively",
