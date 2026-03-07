@@ -1596,3 +1596,246 @@ pub async fn toggle_schedule_entry(
     }
     StateManager::write_schedule(&agent.workspace, &serialize_schedule(&entries))
 }
+
+// ---------------------------------------------------------------------------
+// Deliverables — user-facing files the co-founder generates
+// ---------------------------------------------------------------------------
+
+/// Internal files/dirs that should never appear in the deliverables list.
+const INTERNAL_FILES: &[&str] = &[
+    "HEARTBEAT.md",
+    "JOURNAL.md",
+    "MEMORY.md",
+    "MISSION.md",
+    "SCHEDULE.md",
+    "SOUL.md",
+    "STATE.md",
+    "TASKS.md",
+    "INBOX.md",
+];
+
+const INTERNAL_DIRS: &[&str] = &["artifacts", "tools", "inbox-images"];
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeliverableFile {
+    /// Relative path from .founder/ (e.g. "content/linkedin-posts.md")
+    pub path: String,
+    /// Just the filename
+    pub name: String,
+    /// Folder grouping (e.g. "content", "marketing", or "" for root files)
+    pub folder: String,
+    /// "markdown", "image", or "other"
+    pub file_type: String,
+    /// File size in bytes
+    pub size: u64,
+    /// Last modified ISO timestamp
+    pub modified_at: String,
+}
+
+#[tauri::command]
+pub async fn list_deliverables(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DeliverableFile>, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let founder_dir = format!("{}/.founder", agent.workspace.trim_end_matches('/'));
+    let founder_path = std::path::Path::new(&founder_dir);
+
+    if !founder_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut deliverables = Vec::new();
+    collect_deliverables(founder_path, founder_path, &mut deliverables)?;
+
+    // Sort by modified_at descending (newest first)
+    deliverables.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+
+    Ok(deliverables)
+}
+
+fn collect_deliverables(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+    out: &mut Vec<DeliverableFile>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read directory: {e}"))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let rel = path
+            .strip_prefix(base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+
+        // Get the top-level component relative to .founder/
+        let top_level = rel.split('/').next().unwrap_or("");
+
+        if path.is_dir() {
+            // Skip internal directories at root level
+            if dir == base && INTERNAL_DIRS.contains(&top_level) {
+                continue;
+            }
+            collect_deliverables(base, &path, out)?;
+        } else {
+            // Skip internal files at root level
+            if dir == base && INTERNAL_FILES.contains(&file_name.as_str()) {
+                continue;
+            }
+            // Skip manifest.json files (they belong to artifacts/tools)
+            if file_name == "manifest.json" {
+                continue;
+            }
+
+            let metadata = fs::metadata(&path).map_err(|e| format!("metadata error: {e}"))?;
+            let modified = metadata
+                .modified()
+                .map(|t| {
+                    let dt: chrono::DateTime<Utc> = t.into();
+                    dt.to_rfc3339()
+                })
+                .unwrap_or_default();
+
+            let ext = path
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+
+            let file_type = match ext.as_str() {
+                "md" | "txt" | "json" | "yaml" | "yml" | "toml" | "csv" => "markdown".to_string(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" => "image".to_string(),
+                _ => "other".to_string(),
+            };
+
+            let folder = if dir == base {
+                String::new()
+            } else {
+                dir.strip_prefix(base)
+                    .unwrap_or(dir)
+                    .to_string_lossy()
+                    .to_string()
+            };
+
+            out.push(DeliverableFile {
+                path: rel,
+                name: file_name,
+                folder,
+                file_type,
+                size: metadata.len(),
+                modified_at: modified,
+            });
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn dismiss_deliverable(
+    agent_id: String,
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let founder_dir = format!("{}/.founder", agent.workspace.trim_end_matches('/'));
+    let full_path = format!("{}/{}", founder_dir, path);
+
+    // Security: ensure the resolved path is within .founder/
+    let canonical = std::fs::canonicalize(&full_path)
+        .map_err(|e| format!("File not found: {e}"))?;
+    let canonical_founder = std::fs::canonicalize(&founder_dir)
+        .map_err(|e| format!("Founder dir not found: {e}"))?;
+
+    if !canonical.starts_with(&canonical_founder) {
+        return Err("Cannot delete files outside .founder/".into());
+    }
+
+    // Don't allow deleting internal files
+    let rel = canonical
+        .strip_prefix(&canonical_founder)
+        .unwrap_or(&canonical)
+        .to_string_lossy()
+        .to_string();
+    let top = rel.trim_start_matches('/').split('/').next().unwrap_or("");
+    if INTERNAL_FILES.contains(&top) || INTERNAL_DIRS.contains(&top) {
+        return Err("Cannot dismiss internal files".into());
+    }
+
+    fs::remove_file(&canonical).map_err(|e| format!("Failed to delete: {e}"))?;
+
+    // Clean up empty parent directories (up to .founder/)
+    let mut parent = canonical.parent();
+    while let Some(p) = parent {
+        if p == canonical_founder.as_path() {
+            break;
+        }
+        if fs::read_dir(p).map(|mut d| d.next().is_none()).unwrap_or(false) {
+            let _ = fs::remove_dir(p);
+        } else {
+            break;
+        }
+        parent = p.parent();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn read_deliverable_file(
+    agent_id: String,
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let uuid = Uuid::parse_str(&agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+    let agent = state.db.get_agent(&uuid)?;
+    let founder_dir = format!("{}/.founder", agent.workspace.trim_end_matches('/'));
+    let full_path = format!("{}/{}", founder_dir, path);
+
+    let canonical = std::fs::canonicalize(&full_path)
+        .map_err(|e| format!("File not found: {e}"))?;
+    let canonical_founder = std::fs::canonicalize(&founder_dir)
+        .map_err(|e| format!("Founder dir not found: {e}"))?;
+
+    if !canonical.starts_with(&canonical_founder) {
+        return Err("Cannot read files outside .founder/".into());
+    }
+
+    let ext = std::path::Path::new(&path)
+        .extension()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => {
+            // Return base64-encoded image data
+            let bytes = fs::read(&canonical).map_err(|e| format!("Read error: {e}"))?;
+            let b64 = general_purpose::STANDARD.encode(&bytes);
+            let mime = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                _ => "application/octet-stream",
+            };
+            Ok(format!("data:{};base64,{}", mime, b64))
+        }
+        "svg" => {
+            fs::read_to_string(&canonical).map_err(|e| format!("Read error: {e}"))
+        }
+        _ => {
+            fs::read_to_string(&canonical).map_err(|e| format!("Read error: {e}"))
+        }
+    }
+}

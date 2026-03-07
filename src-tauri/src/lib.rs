@@ -266,6 +266,9 @@ pub fn run() {
             commands::end_pair_session,
             commands::get_pair_session_messages,
             commands::send_feedback,
+            commands::list_deliverables,
+            commands::dismiss_deliverable,
+            commands::read_deliverable_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

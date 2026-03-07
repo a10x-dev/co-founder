@@ -192,3 +192,12 @@ export interface McpServerConfig {
 export interface McpJson {
   mcpServers: Record<string, McpServerConfig>;
 }
+
+export interface DeliverableFile {
+  path: string;
+  name: string;
+  folder: string;
+  file_type: "markdown" | "image" | "other";
+  size: number;
+  modified_at: string;
+}

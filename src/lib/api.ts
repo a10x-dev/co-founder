@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, PairSessionStartResponse } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, PairSessionStartResponse, DeliverableFile } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -265,6 +265,22 @@ async function fileToBase64(file: File): Promise<string> {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+// ---------------------------------------------------------------------------
+// Deliverables
+// ---------------------------------------------------------------------------
+
+export async function listDeliverables(agentId: string): Promise<DeliverableFile[]> {
+  return invoke("list_deliverables", { agentId });
+}
+
+export async function dismissDeliverable(agentId: string, path: string): Promise<void> {
+  return invoke("dismiss_deliverable", { agentId, path });
+}
+
+export async function readDeliverableFile(agentId: string, path: string): Promise<string> {
+  return invoke("read_deliverable_file", { agentId, path });
 }
 
 export async function sendFeedback(

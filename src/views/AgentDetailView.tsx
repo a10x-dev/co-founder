@@ -11,7 +11,7 @@ import {
   ShieldAlert,
   MessageCircle,
 } from "lucide-react";
-import type { Agent, AgentStatus, WorkSessionLog, WorkspaceHealth, Artifact, ToolManifestEntry, GitStatus, TaskBoard, ScheduleEntry, AgentEnvVar } from "@/types";
+import type { Agent, AgentStatus, WorkSessionLog, WorkspaceHealth, Artifact, ToolManifestEntry, GitStatus, TaskBoard, ScheduleEntry, AgentEnvVar, DeliverableFile } from "@/types";
 import {
   getWorkSessions,
   startAgent,
@@ -29,6 +29,7 @@ import {
   getSchedule,
   getDailyReports,
   clearAgentSessions,
+  listDeliverables,
 } from "@/lib/api";
 import type { DailyReport } from "@/lib/api";
 import { formatRelativeTime } from "@/lib/formatTime";
@@ -40,6 +41,7 @@ import SettingsTab from "@/components/agent-detail/SettingsTab";
 import ArtifactsTab from "@/components/agent-detail/ArtifactsTab";
 import ToolsTab from "@/components/agent-detail/ToolsTab";
 import ReportsTab from "@/components/agent-detail/ReportsTab";
+import DeliverablesTab from "@/components/agent-detail/DeliverablesTab";
 
 const STATUS_CONFIG: Record<
   AgentStatus,
@@ -91,7 +93,7 @@ export interface AgentDetailViewProps {
   onDeleted: () => void;
 }
 
-type TabKey = "overview" | "inbox" | "schedule" | "artifacts" | "behavior" | "settings" | "tools" | "reports";
+type TabKey = "overview" | "inbox" | "schedule" | "deliverables" | "artifacts" | "behavior" | "settings" | "tools" | "reports";
 
 export default function AgentDetailView({
   agent,
@@ -131,6 +133,7 @@ export default function AgentDetailView({
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [taskBoard, setTaskBoard] = useState<TaskBoard | null>(null);
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([]);
+  const [deliverables, setDeliverables] = useState<DeliverableFile[]>([]);
 
   // Eagerly fetch core data
   useEffect(() => {
@@ -141,6 +144,7 @@ export default function AgentDetailView({
     getDailyReports(agent.id).then(setReports).catch(() => setReports([]));
     getTaskBoard(agent.id).then(setTaskBoard).catch(() => {});
     gitGetStatus(agent.id).then(setGitStatus).catch(() => {});
+    listDeliverables(agent.id).then(setDeliverables).catch(() => setDeliverables([]));
     setLiveOutput([]);
     setSessionProgress(null);
   }, [agent.id]);
@@ -177,6 +181,7 @@ export default function AgentDetailView({
       setSessionProgress(null);
       readArtifactsManifest(agent.id).then(setArtifacts).catch(() => {});
       readToolsManifest(agent.id).then(setTools).catch(() => {});
+      listDeliverables(agent.id).then(setDeliverables).catch(() => {});
       onRefetch();
     }).then((fn) => { if (active) unlisten = fn; }).catch(() => {});
     return () => { active = false; if (unlisten) unlisten(); };
@@ -332,6 +337,7 @@ export default function AgentDetailView({
     { key: "overview", label: "Overview" },
     { key: "inbox", label: "Inbox" },
     { key: "schedule", label: "Schedule" },
+    ...(deliverables.length > 0 ? [{ key: "deliverables" as TabKey, label: "Deliverables", badge: deliverables.length }] : []),
     ...(artifacts.length > 0 ? [{ key: "artifacts" as TabKey, label: "Artifacts", badge: artifacts.length }] : []),
     { key: "behavior", label: "Behavior" },
     { key: "settings", label: "Settings" },
@@ -612,6 +618,13 @@ export default function AgentDetailView({
           setGitStatus={setGitStatus}
           sessionsCount={sessions.length}
           clearSessions={async () => { await clearAgentSessions(agent.id); setSessions([]); onRefetch(); }}
+        />
+      )}
+      {activeTab === "deliverables" && (
+        <DeliverablesTab
+          agentId={agent.id}
+          deliverables={deliverables}
+          onRefresh={() => listDeliverables(agent.id).then(setDeliverables).catch(() => {})}
         />
       )}
       {activeTab === "artifacts" && (
