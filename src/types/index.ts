@@ -193,6 +193,13 @@ export interface McpJson {
   mcpServers: Record<string, McpServerConfig>;
 }
 
+export interface TelegramStatus {
+  configured: boolean;
+  connected: boolean;
+  online: boolean;
+  bot_username: string | null;
+}
+
 export interface DeliverableFile {
   path: string;
   name: string;

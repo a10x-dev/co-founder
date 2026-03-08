@@ -237,6 +237,7 @@ pub async fn delete_agent(
 
     state.heartbeat.stop_agent_heartbeat(&id);
     let _ = state.process_pool.kill_agent(&id);
+    state.telegram_bridges.stop_bridge(&id);
 
     if let Ok(mut sessions) = state.pair_sessions.lock() {
         if let Some(handle) = sessions.remove(&id) {
@@ -1838,4 +1839,88 @@ pub async fn read_deliverable_file(
             fs::read_to_string(&canonical).map_err(|e| format!("Read error: {e}"))
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Telegram
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn save_telegram_config(
+    agent_id: String,
+    bot_token: String,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Value, String> {
+    // Verify the token first
+    let bot_info = crate::telegram_bridge::verify_token(&bot_token).await?;
+
+    let bot_username = bot_info.username.clone();
+    state
+        .db
+        .save_telegram_config(&agent_id, &bot_token, bot_username.as_deref())?;
+
+    // Check if there's already a chat_id (reconnecting)
+    let chat_id = state
+        .db
+        .get_telegram_config(&agent_id)?
+        .and_then(|c| c.chat_id);
+
+    // Start the bridge so it can receive /start
+    state.telegram_bridges.start_bridge(
+        agent_id,
+        bot_token,
+        chat_id,
+        state.db.clone(),
+        state.pair_sessions.clone(),
+        state.heartbeat.clone(),
+        state.process_pool.clone(),
+        state.cli.clone(),
+        app,
+    );
+
+    Ok(serde_json::json!({
+        "bot_name": bot_info.first_name,
+        "bot_username": bot_info.username,
+    }))
+}
+
+#[tauri::command]
+pub async fn remove_telegram_config(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.telegram_bridges.stop_bridge(&agent_id);
+    state.db.delete_telegram_config(&agent_id)
+}
+
+#[tauri::command]
+pub async fn get_telegram_status(
+    agent_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Value, String> {
+    let config = state.db.get_telegram_config(&agent_id)?;
+    match config {
+        Some(c) => Ok(serde_json::json!({
+            "configured": true,
+            "connected": c.chat_id.is_some(),
+            "online": state.telegram_bridges.is_running(&agent_id),
+            "bot_username": c.bot_username,
+        })),
+        None => Ok(serde_json::json!({
+            "configured": false,
+            "connected": false,
+            "online": false,
+            "bot_username": null,
+        })),
+    }
+}
+
+#[tauri::command]
+pub async fn verify_telegram_token(token: String) -> Result<Value, String> {
+    let info = crate::telegram_bridge::verify_token(&token).await?;
+    Ok(serde_json::json!({
+        "bot_name": info.first_name,
+        "bot_username": info.username,
+    }))
 }

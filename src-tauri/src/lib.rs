@@ -8,6 +8,7 @@ mod heartbeat;
 mod work_session;
 mod commands;
 mod daily_report;
+pub mod telegram_bridge;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -38,6 +39,7 @@ pub struct AppState {
     pub heartbeat: Arc<heartbeat::HeartbeatScheduler>,
     pub cli: Arc<RwLock<cli_adapter::CliAdapter>>,
     pub pair_sessions: Arc<Mutex<HashMap<String, PairSessionHandle>>>,
+    pub telegram_bridges: Arc<telegram_bridge::TelegramBridgeManager>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,12 +57,15 @@ pub fn run() {
         settings.claude_cli_path.clone(),
     )));
 
+    let telegram_bridges = Arc::new(telegram_bridge::TelegramBridgeManager::new());
+
     let app_state = AppState {
         db: db.clone(),
         process_pool: pool.clone(),
         heartbeat: heartbeat.clone(),
         cli: cli.clone(),
         pair_sessions: Arc::new(Mutex::new(HashMap::new())),
+        telegram_bridges: telegram_bridges.clone(),
     };
 
     let app = tauri::Builder::default()
@@ -109,6 +114,7 @@ pub fn run() {
                     }
                     "quit" => {
                         let state = app.state::<AppState>();
+                        state.telegram_bridges.stop_all();
                         pause_running_agents(
                             state.db.as_ref(),
                             state.process_pool.as_ref(),
@@ -175,6 +181,29 @@ pub fn run() {
                 } else {
                     cli_adapter::detect_claude_path().is_none()
                 };
+
+                // Start Telegram bridges for all configured agents
+                if let Ok(agents) = db_for_startup.get_agents() {
+                    let state = app.state::<AppState>();
+                    for agent in &agents {
+                        let aid = agent.id.to_string();
+                        if let Ok(Some(tg_config)) = db_for_startup.get_telegram_config(&aid) {
+                            if tg_config.enabled {
+                                state.telegram_bridges.start_bridge(
+                                    aid,
+                                    tg_config.bot_token,
+                                    tg_config.chat_id,
+                                    state.db.clone(),
+                                    state.pair_sessions.clone(),
+                                    state.heartbeat.clone(),
+                                    state.process_pool.clone(),
+                                    state.cli.clone(),
+                                    app.handle().clone(),
+                                );
+                            }
+                        }
+                    }
+                }
 
                 if needs_warning {
                     let app_handle = app.handle().clone();
@@ -269,6 +298,10 @@ pub fn run() {
             commands::list_deliverables,
             commands::dismiss_deliverable,
             commands::read_deliverable_file,
+            commands::save_telegram_config,
+            commands::remove_telegram_config,
+            commands::get_telegram_status,
+            commands::verify_telegram_token,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

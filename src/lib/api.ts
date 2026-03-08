@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, PairSessionStartResponse, DeliverableFile } from "@/types";
+import type { Agent, AgentEnvVar, CreateAgentRequest, ImportAgentRequest, WorkSessionLog, GlobalSettings, WorkspaceHealth, FolderInspectionResponse, Artifact, ToolManifestEntry, McpJson, GitStatus, TaskBoard, SpendBreakdown, ScheduleEntry, PairSessionStartResponse, DeliverableFile, TelegramStatus } from "@/types";
 
 export async function getAgents(): Promise<Agent[]> {
   return invoke("get_agents");
@@ -281,6 +281,26 @@ export async function dismissDeliverable(agentId: string, path: string): Promise
 
 export async function readDeliverableFile(agentId: string, path: string): Promise<string> {
   return invoke("read_deliverable_file", { agentId, path });
+}
+
+// ---------------------------------------------------------------------------
+// Telegram
+// ---------------------------------------------------------------------------
+
+export async function saveTelegramConfig(agentId: string, botToken: string): Promise<{ bot_name: string; bot_username: string | null }> {
+  return invoke("save_telegram_config", { agentId, botToken });
+}
+
+export async function removeTelegramConfig(agentId: string): Promise<void> {
+  return invoke("remove_telegram_config", { agentId });
+}
+
+export async function getTelegramStatus(agentId: string): Promise<TelegramStatus> {
+  return invoke("get_telegram_status", { agentId });
+}
+
+export async function verifyTelegramToken(token: string): Promise<{ bot_name: string; bot_username: string | null }> {
+  return invoke("verify_telegram_token", { token });
 }
 
 export async function sendFeedback(

@@ -18,6 +18,7 @@ import {
   gitUndoLastSession,
 } from "@/lib/api";
 import IntegrationsPanel from "@/components/IntegrationsPanel";
+import TelegramPanel from "@/components/TelegramPanel";
 
 const divider = { borderTop: "1px solid var(--border-default)", paddingTop: 24 };
 
@@ -184,6 +185,12 @@ export default function SettingsTab({
             ))}
           </div>
         )}
+      </div>
+
+      {/* ── Telegram ──────────────────────────────────────────────────────── */}
+      <div style={divider}>
+        <p className="text-[15px] font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Telegram</p>
+        <TelegramPanel agentId={agent.id} agentName={agent.name} />
       </div>
 
       {/* ── Integrations ───────────────────────────────────────────────────── */}

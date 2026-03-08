@@ -82,6 +82,7 @@ impl Database {
         Self::migrate_add_work_session_mode(&conn)?;
         Self::migrate_add_budget_and_teams(&conn)?;
         Self::migrate_add_pair_messages_table(&conn)?;
+        Self::migrate_add_telegram_config(&conn)?;
 
         Ok(())
     }
@@ -395,6 +396,11 @@ impl Database {
             params![&id_str],
         )
         .map_err(|e| format!("Delete sessions error: {e}"))?;
+        conn.execute(
+            "DELETE FROM telegram_config WHERE agent_id = ?1",
+            params![&id_str],
+        )
+        .map_err(|e| format!("Delete telegram_config error: {e}"))?;
         // Finally delete the agent itself
         conn.execute("DELETE FROM agents WHERE id = ?1", params![&id_str])
             .map_err(|e| format!("Delete error: {e}"))?;
@@ -852,6 +858,100 @@ impl Database {
             .map_err(|e| format!("Row error: {e}"))?;
 
         Ok(rows)
+    }
+
+    fn migrate_add_telegram_config(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS telegram_config (
+                agent_id TEXT PRIMARY KEY,
+                bot_token TEXT NOT NULL,
+                chat_id INTEGER,
+                bot_username TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (agent_id) REFERENCES agents(id)
+            );",
+        )
+        .map_err(|e| format!("Telegram config migration failed: {e}"))?;
+        Ok(())
+    }
+
+    // ── Telegram config ───────────────────────────────────────────────────────
+
+    pub fn save_telegram_config(
+        &self,
+        agent_id: &str,
+        bot_token: &str,
+        bot_username: Option<&str>,
+    ) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO telegram_config (agent_id, bot_token, bot_username, enabled, created_at)
+             VALUES (?1, ?2, ?3, 1, ?4)",
+            params![
+                agent_id,
+                bot_token,
+                bot_username,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )
+        .map_err(|e| format!("Save telegram config error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn get_telegram_config(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<crate::telegram_bridge::TelegramConfigRow>, String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        let result = conn.query_row(
+            "SELECT agent_id, bot_token, chat_id, bot_username, enabled FROM telegram_config WHERE agent_id = ?1",
+            params![agent_id],
+            |row| {
+                Ok(crate::telegram_bridge::TelegramConfigRow {
+                    agent_id: row.get(0)?,
+                    bot_token: row.get(1)?,
+                    chat_id: row.get(2)?,
+                    bot_username: row.get(3)?,
+                    enabled: row.get::<_, i32>(4)? != 0,
+                })
+            },
+        );
+        match result {
+            Ok(config) => Ok(Some(config)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(format!("Get telegram config error: {e}")),
+        }
+    }
+
+    pub fn update_telegram_chat_id(&self, agent_id: &str, chat_id: i64) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "UPDATE telegram_config SET chat_id = ?1 WHERE agent_id = ?2",
+            params![chat_id, agent_id],
+        )
+        .map_err(|e| format!("Update telegram chat_id error: {e}"))?;
+        Ok(())
+    }
+
+    pub fn delete_telegram_config(&self, agent_id: &str) -> Result<(), String> {
+        let conn = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        conn.execute(
+            "DELETE FROM telegram_config WHERE agent_id = ?1",
+            params![agent_id],
+        )
+        .map_err(|e| format!("Delete telegram config error: {e}"))?;
+        Ok(())
+    }
+
+    /// String-based helper for telegram bridge (avoids UUID parsing at call site)
+    pub fn get_pair_messages_by_session_str(
+        &self,
+        agent_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<(String, String, String)>, String> {
+        let uuid = Uuid::parse_str(agent_id).map_err(|e| format!("Invalid UUID: {e}"))?;
+        self.get_pair_messages_by_session(&uuid, session_id)
     }
 }
 

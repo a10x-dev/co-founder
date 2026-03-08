@@ -568,8 +568,6 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
     ) -> Result<WorkSessionLog, String> {
         let log_id = Uuid::new_v4();
         let started_at = Utc::now().to_rfc3339();
-        let session_start = std::time::Instant::now();
-
         let soul_content = StateManager::get_soul_content(&agent.workspace, &agent.personality);
         let mission_file = StateManager::read_mission(&agent.workspace);
         let mission_content = if mission_file.trim().is_empty() {
@@ -649,10 +647,6 @@ Track everything relevant to your mission: revenue, users, deployments, test cov
         let mut user_ended = false;
 
         let summary = loop {
-            if session_start.elapsed().as_secs() > agent.max_session_duration_secs {
-                outcome = SessionOutcome::Timeout;
-                break "Pair session timed out".to_string();
-            }
 
             let config = TurnConfig {
                 agent_id: agent.id.to_string(),
