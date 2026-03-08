@@ -32,6 +32,25 @@ struct TgUpdate {
 struct TgMessage {
     chat: TgChat,
     text: Option<String>,
+    caption: Option<String>,
+    photo: Option<Vec<TgPhotoSize>>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct TgPhotoSize {
+    file_id: String,
+    #[allow(dead_code)]
+    file_unique_id: String,
+    #[allow(dead_code)]
+    width: u32,
+    #[allow(dead_code)]
+    height: u32,
+    file_size: Option<u64>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct TgFile {
+    file_path: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug)]
@@ -309,6 +328,57 @@ async fn send_typing(client: &reqwest::Client, token: &str, chat_id: i64) {
         .await;
 }
 
+/// Download a Telegram photo to a local file. Returns the saved path.
+async fn download_photo(
+    client: &reqwest::Client,
+    token: &str,
+    file_id: &str,
+    dest_dir: &str,
+) -> Result<String, String> {
+    // Step 1: getFile to get the file_path
+    let url = format!("https://api.telegram.org/bot{}/getFile", token);
+    let resp = client
+        .get(&url)
+        .query(&[("file_id", file_id)])
+        .send()
+        .await
+        .map_err(|e| format!("getFile HTTP error: {e}"))?;
+
+    let body: TgResponse<TgFile> = resp.json().await.map_err(|e| format!("getFile parse error: {e}"))?;
+    if !body.ok {
+        return Err(body.description.unwrap_or_else(|| "getFile failed".to_string()));
+    }
+    let tg_path = body
+        .result
+        .and_then(|f| f.file_path)
+        .ok_or_else(|| "No file_path in getFile response".to_string())?;
+
+    // Step 2: Download the file bytes
+    let download_url = format!("https://api.telegram.org/file/bot{}/{}", token, tg_path);
+    let file_resp = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| format!("Download HTTP error: {e}"))?;
+    let bytes = file_resp
+        .bytes()
+        .await
+        .map_err(|e| format!("Download read error: {e}"))?;
+
+    // Step 3: Save to dest_dir with a unique name
+    let ext = tg_path
+        .rsplit('.')
+        .next()
+        .unwrap_or("jpg");
+    let filename = format!("telegram_{}.{}", Uuid::new_v4(), ext);
+    let dest_path = std::path::Path::new(dest_dir).join(&filename);
+
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("mkdir error: {e}"))?;
+    std::fs::write(&dest_path, &bytes).map_err(|e| format!("write error: {e}"))?;
+
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
 pub async fn verify_token(token: &str) -> Result<TgBotInfo, String> {
     let client = reqwest::Client::new();
     let url = format!("https://api.telegram.org/bot{}/getMe", token);
@@ -459,7 +529,12 @@ async fn bridge_loop(
             };
 
             let msg_chat_id = msg.chat.id;
-            let text = msg.text.unwrap_or_default();
+            let raw_text = msg.text.clone().unwrap_or_default();
+            let caption = msg.caption.clone().unwrap_or_default();
+            let has_photo = msg.photo.is_some() && !msg.photo.as_ref().unwrap().is_empty();
+
+            // Use text for commands, caption for photo messages
+            let text = if has_photo { &caption } else { &raw_text };
 
             // ── Handle /start ─────────────────────────────────────────────
             if text.starts_with("/start") {
@@ -561,8 +636,53 @@ async fn bridge_loop(
                 continue;
             }
 
-            // Skip empty messages
-            if text.trim().is_empty() {
+            // ── Handle photo messages ────────────────────────────────────
+            let prompt_text = if has_photo {
+                let photos = msg.photo.as_ref().unwrap();
+                // Pick the largest photo (last in the array, sorted by size)
+                let best = photos
+                    .iter()
+                    .max_by_key(|p| p.file_size.unwrap_or(0))
+                    .unwrap();
+
+                let workspace = db
+                    .get_agent(&Uuid::parse_str(&agent_id).unwrap_or_default())
+                    .map(|a| a.workspace.clone())
+                    .unwrap_or_else(|_| "/tmp".to_string());
+                let dest_dir = format!("{}/.founder/telegram-images", workspace);
+
+                match download_photo(&client, &bot_token, &best.file_id, &dest_dir).await {
+                    Ok(path) => {
+                        if caption.trim().is_empty() {
+                            format!(
+                                "The user sent you a photo via Telegram. Read the image file to see it: {}",
+                                path
+                            )
+                        } else {
+                            format!(
+                                "The user sent you a photo via Telegram with caption: \"{}\"\n\nRead the image file to see it: {}",
+                                caption, path
+                            )
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[telegram] Failed to download photo for {}: {}", agent_id, e);
+                        let _ = send_message(
+                            &client,
+                            &bot_token,
+                            msg_chat_id,
+                            "Sorry, I couldn't download that image. Try sending it again.",
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+            } else {
+                raw_text.clone()
+            };
+
+            // Skip empty messages (no text and no photo)
+            if prompt_text.trim().is_empty() {
                 continue;
             }
 
@@ -573,7 +693,7 @@ async fn bridge_loop(
                 // Start a new pair session
                 match start_telegram_pair_session(
                     &agent_id,
-                    &text,
+                    &prompt_text,
                     &db,
                     &pair_sessions,
                     &heartbeat,
@@ -605,12 +725,12 @@ async fn bridge_loop(
                     .and_then(|s| s.get(&agent_id).map(|h| h.sender.clone()));
 
                 if let Some(sender) = sender {
-                    if sender.send(LiveMessage::UserMessage(text.clone())).await.is_err() {
+                    if sender.send(LiveMessage::UserMessage(prompt_text.clone())).await.is_err() {
                         // Session ended, start a new one
                         active_session_id = None;
                         match start_telegram_pair_session(
                             &agent_id,
-                            &text,
+                            &prompt_text,
                             &db,
                             &pair_sessions,
                             &heartbeat,
